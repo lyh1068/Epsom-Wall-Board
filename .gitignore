@@ -1,0 +1,25 @@
+# ESP-IDF build output
+build/
+
+# Generated from sdkconfig.defaults. Not tracked, because it is a derived file --
+# sdkconfig.defaults is the source of truth. See the skill: editing the defaults
+# has no effect once this file exists, so regenerate rather than hand-edit.
+sdkconfig
+sdkconfig.old
+
+# Fetched by the component manager.
+managed_components/
+
+# NOTE: dependencies.lock is deliberately NOT ignored. It pins the exact resolved
+# component versions. On the previous Tab5 project it was ignored, and the display
+# BSP silently moved a minor version on a fresh resolve with nothing in the diff
+# to show for it.
+
+# Credentials. Only .env.example is tracked.
+.env
+# Belt and braces: if anyone follows PLAN.md's secrets.h route instead, that
+# must not be committed either.
+main/secrets.h
+secrets.h
+
+.DS_Store
