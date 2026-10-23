@@ -14,24 +14,18 @@
 #include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "net/http_json.h"
+#include "data/home.h"
 #include "net/wifi.h"
-#include "wallboard_secrets.h"
 
 static const char *TAG = "aircraft";
 
 #define MAX_BODY (512 * 1024)
 
-static geo_origin_t s_home;
 static SemaphoreHandle_t s_mutex;
 static adsb_aircraft_t *s_ac;           /* latest snapshot, PSRAM */
 static adsb_aircraft_t *s_scratch;      /* parse target, PSRAM */
 static aircraft_meta_t s_meta;
 static volatile int s_range_nm = 20;
-
-const geo_origin_t *aircraft_home(void)
-{
-    return &s_home;
-}
 
 void aircraft_set_range_nm(int range_nm)
 {
@@ -76,10 +70,10 @@ static void *psram_malloc(size_t size)
 static bool poll_once(http_json_t *http, int *http_status, esp_err_t *err)
 {
     /* Only a rounded (~1 km) position leaves the board. */
-    char url[128];
+    char url[128], where[32];
     int radius = (int)ceil(s_range_nm * RADAR_EDGE_FACTOR);
-    snprintf(url, sizeof(url), "https://api.adsb.lol/v2/point/%.2f/%.2f/%d",
-             s_home.lat, s_home.lon, radius);
+    home_query_coords(where, sizeof(where), "/");
+    snprintf(url, sizeof(url), "https://api.adsb.lol/v2/point/%s/%d", where, radius);
 
     const char *body;
     size_t len;
@@ -142,11 +136,7 @@ static void aircraft_task(void *arg)
 
 void aircraft_start(void)
 {
-#if HOME_LAT_SET && HOME_LON_SET
-    geo_origin_init(&s_home, atof(HOME_LAT), atof(HOME_LON));
-#else
-    geo_origin_init(&s_home, HOME_LAT_DEFAULT, HOME_LON_DEFAULT);
-#endif
+    home_origin();      /* initialise before any task reads it */
 
     cJSON_Hooks hooks = { .malloc_fn = psram_malloc, .free_fn = free };
     cJSON_InitHooks(&hooks);

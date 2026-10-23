@@ -5,6 +5,7 @@
 #include <string.h>
 #include "config.h"
 #include "data/aircraft.h"
+#include "data/home.h"
 #include "data/routes.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -14,6 +15,7 @@
 #include "ui/icons.h"
 #include "ui/status_corner.h"
 #include "ui/ui_util.h"
+#include "ui/weather_view.h"
 
 static const char *TAG = "radar";
 
@@ -146,7 +148,7 @@ static void layout_static(void)
         lv_label_set_text(s_ring_lbl[i], buf);
     }
 
-    const geo_origin_t *home = aircraft_home();
+    const geo_origin_t *home = home_origin();
     const double k = scale();
     for (size_t i = 0; i < RUNWAY_COUNT; i++) {
         double x1, y1, x2, y2;
@@ -335,7 +337,7 @@ static void ingest(int n, const aircraft_meta_t *m)
 {
     static bool seen[MAX_SLOTS];
     memset(seen, 0, sizeof(seen));
-    const geo_origin_t *home = aircraft_home();
+    const geo_origin_t *home = home_origin();
     const double max_nm = range_nm() * RADAR_EDGE_FACTOR;
 
     for (int i = 0; i < n; i++) {
@@ -746,6 +748,9 @@ static void build_panel(lv_obj_t *screen)
         lv_obj_set_pos(l, i * 128, 336);
     }
 
+    /* Weather, here until the Morning page exists. */
+    weather_view_create(panel, 0, 372, CONTENT_W);
+
     lv_obj_t *status = plain_obj(panel);
     lv_obj_set_size(status, CONTENT_W, LV_SIZE_CONTENT);
     lv_obj_align(status, LV_ALIGN_BOTTOM_LEFT, 0, 0);
@@ -765,6 +770,7 @@ static void frame_cb(lv_timer_t *t)
     if (++frame % PANEL_EVERY == 0) {
         refresh_panel();
         status_corner_refresh();
+        weather_view_refresh();
     }
 }
 

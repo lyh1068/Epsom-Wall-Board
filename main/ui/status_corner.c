@@ -5,6 +5,7 @@
 #include "config.h"
 #include "data/aircraft.h"
 #include "data/routes.h"
+#include "data/weather.h"
 #include "net/sntp_time.h"
 #include "net/wifi.h"
 #include "ui/ui_util.h"
@@ -14,7 +15,7 @@
 #define COLOR_WARN   lv_color_hex(0xFFB74D)
 #define COLOR_BAD    lv_color_hex(0xFF5252)
 
-static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes;
+static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes, *s_weather;
 
 void status_corner_create(lv_obj_t *parent, int32_t width)
 {
@@ -25,6 +26,7 @@ void status_corner_create(lv_obj_t *parent, int32_t width)
     s_time = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_feed = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_routes = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
+    s_weather = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     status_corner_refresh();
 }
 
@@ -157,10 +159,38 @@ static void refresh_routes(void)
     ui_set_text_color(s_routes, c);
 }
 
+static void refresh_weather(void)
+{
+    weather_meta_t m;
+    weather_get(NULL, &m);
+    char line[96];
+    lv_color_t c = COLOR_TEXT;
+    long age = m.last_ok ? (long)(time(NULL) - m.last_ok) : -1;
+    if (m.last_err != ESP_OK || (m.http_status != 0 && m.http_status != 200)) {
+        if (m.last_err == ESP_OK) {
+            snprintf(line, sizeof(line), "Weather: HTTP %d, retry in %lu s", m.http_status, (unsigned long)m.backoff_s);
+        } else {
+            snprintf(line, sizeof(line), "Weather: %s, retry in %lu s", esp_err_to_name(m.last_err), (unsigned long)m.backoff_s);
+        }
+        c = COLOR_BAD;
+    } else if (age < 0) {
+        snprintf(line, sizeof(line), m.waiting_for_wifi ? "Weather: waiting for Wi-Fi" : "Weather: first poll...");
+        c = COLOR_WARN;
+    } else {
+        snprintf(line, sizeof(line), "Weather: Open-Meteo, %ld min ago", age / 60);
+    }
+    if (age > 3 * WEATHER_POLL_S) {
+        c = COLOR_BAD;      /* stale */
+    }
+    ui_set_text(s_weather, line);
+    ui_set_text_color(s_weather, c);
+}
+
 void status_corner_refresh(void)
 {
     refresh_clock();
     refresh_wifi();
     refresh_feed();
     refresh_routes();
+    refresh_weather();
 }

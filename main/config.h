@@ -31,5 +31,11 @@
 /* Flash wear: write the cache back at most this often, and only if it changed. */
 #define ROUTES_SAVE_EVERY_S     600
 
+/* Open-Meteo (PLAN.md §4: 15 min). */
+#define WEATHER_POLL_S          900
+#define WEATHER_BACKOFF_MAX_S   3600
+#define WEATHER_RAIN_PCT        50      /* "next rain" = first hour at or above this */
+#define WEATHER_SPARK_HOURS     12
+
 /* The "overhead now" chip: nearest airborne aircraft within this distance. */
 #define OVERHEAD_NM             5.0

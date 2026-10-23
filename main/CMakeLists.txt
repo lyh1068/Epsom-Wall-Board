@@ -1,10 +1,12 @@
 idf_component_register(SRCS "app_main.c"
                             "data/adsb_parse.c" "data/aircraft.c"
+                            "data/home.c"
                             "data/route_cache.c" "data/route_parse.c" "data/routes.c"
+                            "data/weather.c" "data/weather_parse.c"
                             "geo/geo.c"
                             "hw/rx8130.c"
                             "net/http_json.c" "net/sntp_time.c" "net/wifi.c"
-                            "ui/icons.c" "ui/radar.c" "ui/status_corner.c"
+                            "ui/icons.c" "ui/radar.c" "ui/status_corner.c" "ui/weather_view.c"
                     INCLUDE_DIRS ".")
 
 # Credentials: tools/gen_secrets.py turns .env (or real environment variables)

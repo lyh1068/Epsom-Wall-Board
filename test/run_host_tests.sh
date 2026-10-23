@@ -20,6 +20,7 @@ cc -std=c11 -Wall -Wextra -Werror -O1 -g $san \
     "$root/main/data/adsb_parse.c" \
     "$root/main/data/route_parse.c" \
     "$root/main/data/route_cache.c" \
+    "$root/main/data/weather_parse.c" \
     "$out/cJSON.o" \
     -lm -o "$out/test_main"
 

@@ -10,6 +10,7 @@
 #include "data/adsb_parse.h"
 #include "data/route_cache.h"
 #include "data/route_parse.h"
+#include "data/weather_parse.h"
 #include "geo/geo.h"
 
 static int s_failed, s_run;
@@ -328,6 +329,59 @@ static void test_route_cache(void)
     CHECK(!rc_deserialize(&c2, buf, 3));
 }
 
+static void test_weather(const char *dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/open_meteo_forecast.json", dir);
+    size_t len;
+    char *json = read_file(path, &len);
+    CHECK(json != NULL);
+    if (json == NULL) {
+        return;
+    }
+    weather_t w;
+    CHECK(weather_parse(json, len, &w));
+    free(json);
+
+    CHECK(w.time == 1792789200);
+    CHECK_NEAR(w.temp_c, 8.3, 1e-4);
+    CHECK(w.code == 1 && !w.is_day);
+    CHECK(strcmp(weather_code_text(w.code), "Mainly clear") == 0);
+    CHECK(w.hours == 24);
+    CHECK(w.h_time[0] == 1792789200 && w.h_time[23] == 1792789200 + 23 * 3600);
+    CHECK_NEAR(w.h_temp[9], 6.5, 1e-4);
+
+    /* First hour at >= 50% is index 14, 11:00 UTC on the 24th (76%, drizzle). */
+    CHECK(weather_hour_index(&w, w.time + 1800) == 0);
+    CHECK(weather_next_rain(&w, w.time, 50, 24) == 14);
+    CHECK(w.h_pop[14] == 76 && w.h_code[14] == 51);
+    CHECK(weather_next_rain(&w, w.time, 50, 12) == -1);         /* not within 12 h */
+    CHECK(weather_next_rain(&w, w.h_time[14] + 59, 50, 1) == 14);  /* raining now */
+    CHECK(weather_next_rain(&w, w.time - 7200, 50, 24) == -1);  /* before the forecast */
+    CHECK(weather_hour_index(&w, w.h_time[23] + 3600) == -1);   /* after it */
+
+    /* null probabilities read as unknown, never as rain. */
+    const char *nulls = "{\"current\":{\"time\":0,\"temperature_2m\":1.5,\"weather_code\":61},"
+                        "\"hourly\":{\"time\":[0,3600],\"temperature_2m\":[1,2],"
+                        "\"precipitation_probability\":[null,90],\"weather_code\":[null,61]}}";
+    CHECK(weather_parse(nulls, strlen(nulls), &w));
+    CHECK(w.hours == 2 && w.h_pop[0] == -1 && w.h_code[0] == -1);
+    CHECK(w.is_day);    /* missing is_day defaults to day */
+    CHECK(weather_next_rain(&w, 0, 50, 24) == 1);
+
+    /* A null temperature ends the usable forecast there. */
+    const char *gap = "{\"current\":{\"time\":0,\"temperature_2m\":1,\"weather_code\":0},"
+                      "\"hourly\":{\"time\":[0,3600,7200],\"temperature_2m\":[1,null,3],"
+                      "\"precipitation_probability\":[0,0,0],\"weather_code\":[0,0,0]}}";
+    CHECK(weather_parse(gap, strlen(gap), &w));
+    CHECK(w.hours == 1);
+
+    const char *no_hourly = "{\"current\":{\"time\":0,\"temperature_2m\":1,\"weather_code\":0}}";
+    CHECK(!weather_parse(no_hourly, strlen(no_hourly), &w));
+    CHECK(!weather_parse("[]", 2, &w));
+    CHECK(strcmp(weather_code_text(1234), "Unknown") == 0);
+}
+
 int main(int argc, char **argv)
 {
     const char *fixtures = argc > 1 ? argv[1] : "test/fixtures";
@@ -336,6 +390,7 @@ int main(int argc, char **argv)
     test_adsb_edge_cases();
     test_routes(fixtures);
     test_route_cache();
+    test_weather(fixtures);
     printf("%d checks, %d failed\n", s_run, s_failed);
     return s_failed ? 1 : 0;
 }

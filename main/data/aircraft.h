@@ -25,9 +25,6 @@ typedef struct {
     bool waiting_for_wifi;
 } aircraft_meta_t;
 
-/* Home position used for the radar and the API query. */
-const geo_origin_t *aircraft_home(void);
-
 void aircraft_start(void);
 
 /* The radius polled follows the radar range (range x edge factor). */
