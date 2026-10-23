@@ -28,6 +28,10 @@ KEYS = {
     "RAIL_DATA_KEY": "REPLACE-ME",
     # TfL Unified API app_key from api-portal.tfl.gov.uk.
     "TFL_APP_KEY": "REPLACE-ME",
+    # Radar centre, decimal degrees. Personal, so it lives here rather than in
+    # config.h; unset means the firmware uses Epsom station.
+    "HOME_LAT": "",
+    "HOME_LON": "",
 }
 
 

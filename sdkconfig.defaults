@@ -37,9 +37,17 @@ CONFIG_LV_USE_CLIB_MALLOC=y
 CONFIG_LV_USE_CLIB_SPRINTF=y
 CONFIG_LV_USE_CLIB_STRING=y
 
-# Fonts. 14 px is ~1.2 mm tall on this 5" 720p panel; 28 is for the diag overlay.
+# Fonts. 14 px is ~1.2 mm tall on this 5" 720p panel, so it is for small print only.
 CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
+
+# The UI is landscape on a portrait panel: rotate on the P4's PPA rather than
+# the CPU, to shorten each flush and the tear window (tab5-board skill).
+CONFIG_LVGL_PORT_ENABLE_PPA=y
+
+# TLS buffers in PSRAM: handshakes are hungry and internal RAM is shared with Wi-Fi.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
 # Performance monitor
 CONFIG_LV_USE_OBSERVER=y

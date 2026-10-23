@@ -1,10 +1,10 @@
-idf_component_register(SRCS "app_main.c" "diag.c" "lvgl_demo_ui.c"
-                            "hw/rx8130.c" "net/wifi.c" "net/sntp_time.c"
+idf_component_register(SRCS "app_main.c"
+                            "data/adsb_parse.c" "data/aircraft.c"
+                            "geo/geo.c"
+                            "hw/rx8130.c"
+                            "net/http_json.c" "net/sntp_time.c" "net/wifi.c"
+                            "ui/icons.c" "ui/radar.c" "ui/status_corner.c"
                     INCLUDE_DIRS ".")
-
-lvgl_port_create_c_image("images/esp_logo.png" "images/gen/" "ARGB8888" "NONE")
-lvgl_port_create_c_image("images/esp_text.png" "images/gen/" "ARGB8888" "NONE")
-lvgl_port_add_images(${COMPONENT_LIB} "images/gen/")
 
 # Credentials: tools/gen_secrets.py turns .env (or real environment variables)
 # into wallboard_secrets.h inside the build directory. It runs on every build
