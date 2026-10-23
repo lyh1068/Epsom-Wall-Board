@@ -5,6 +5,7 @@
 #include "bsp/esp-bsp.h"
 #include "config.h"
 #include "data/aircraft.h"
+#include "data/routes.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -31,6 +32,7 @@ void app_main(void)
     time_init();
     time_sync_start();
     aircraft_start();
+    routes_start();
 
     bsp_display_lock(0);
     /* Landscape: rotated in software (on the PPA), see the tab5-board skill. */

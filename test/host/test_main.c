@@ -8,6 +8,8 @@
 #include <string.h>
 
 #include "data/adsb_parse.h"
+#include "data/route_cache.h"
+#include "data/route_parse.h"
 #include "geo/geo.h"
 
 static int s_failed, s_run;
@@ -197,12 +199,143 @@ static void test_adsb_edge_cases(void)
     CHECK(!adsb_is_emergency_squawk(""));
 }
 
+static route_parse_result_t parse_route_fixture(const char *dir, const char *name, route_t *r)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/%s", dir, name);
+    size_t len;
+    char *json = read_file(path, &len);
+    CHECK(json != NULL);
+    if (json == NULL) {
+        return ROUTE_PARSE_ERROR;
+    }
+    route_parse_result_t res = route_parse(json, len, r);
+    free(json);
+    return res;
+}
+
+static void test_routes(const char *dir)
+{
+    route_t r;
+    CHECK(parse_route_fixture(dir, "adsbdb_callsign_BAW371.json", &r) == ROUTE_PARSE_OK);
+    CHECK(strcmp(r.callsign, "BAW371") == 0);
+    CHECK(strcmp(r.airline_icao, "BAW") == 0);
+    CHECK(strcmp(r.airline_name, "British Airways") == 0);
+    CHECK(strcmp(r.origin_iata, "MRS") == 0 && strcmp(r.origin_icao, "LFML") == 0);
+    CHECK(strcmp(r.origin_city, "Marseille") == 0);
+    CHECK(strcmp(r.dest_iata, "LHR") == 0 && strcmp(r.dest_icao, "EGLL") == 0);
+    CHECK(strcmp(r.dest_city, "London") == 0);
+    CHECK(!route_is_unverified(&r));
+
+    /* easyJet: route present but flagged; "Nápoli" folded to ASCII. */
+    CHECK(parse_route_fixture(dir, "adsbdb_callsign_EZY8341.json", &r) == ROUTE_PARSE_OK);
+    CHECK(strcmp(r.origin_iata, "LGW") == 0 && strcmp(r.dest_iata, "NAP") == 0);
+    CHECK(strcmp(r.dest_city, "Napoli") == 0);
+    CHECK(route_is_unverified(&r));
+
+    CHECK(parse_route_fixture(dir, "adsbdb_callsign_unknown.json", &r) == ROUTE_PARSE_UNKNOWN);
+
+    const char *bad = "{\"response\":{}}";
+    CHECK(route_parse(bad, strlen(bad), &r) == ROUTE_PARSE_ERROR);
+    CHECK(route_parse("nope", 4, &r) == ROUTE_PARSE_ERROR);
+
+    /* Missing destination: unverified even for a reliable airline. */
+    const char *half = "{\"response\":{\"flightroute\":{\"callsign\":\"BAW1\",\"airline\":{\"icao\":\"BAW\"},"
+                       "\"origin\":{\"iata_code\":\"LHR\"},\"destination\":null}}}";
+    CHECK(route_parse(half, strlen(half), &r) == ROUTE_PARSE_OK);
+    CHECK(r.dest_iata[0] == '\0' && route_is_unverified(&r));
+
+    /* Callsign prefix alone is enough (airline field missing). */
+    const char *ryr = "{\"response\":{\"flightroute\":{\"callsign\":\"RYR3TC\","
+                      "\"origin\":{\"iata_code\":\"BRS\"},\"destination\":{\"iata_code\":\"LIG\"}}}}";
+    CHECK(route_parse(ryr, strlen(ryr), &r) == ROUTE_PARSE_OK);
+    CHECK(route_is_unverified(&r));
+
+    char buf[16];
+    route_fold_ascii(buf, sizeof(buf), "Z\xC3\xBCrich");          /* Zürich */
+    CHECK(strcmp(buf, "Zurich") == 0);
+    route_fold_ascii(buf, sizeof(buf), "\xC3\x85lesund");          /* Ålesund */
+    CHECK(strcmp(buf, "Alesund") == 0);
+    route_fold_ascii(buf, sizeof(buf), "\xE5\x8C\x97\xE4\xBA\xAC");  /* 北京: two '?' */
+    CHECK(strcmp(buf, "??") == 0);
+    route_fold_ascii(buf, sizeof(buf), "bad\xC3");                  /* truncated sequence */
+    CHECK(strcmp(buf, "bad?") == 0);
+    route_fold_ascii(buf, 4, "Marseille");                          /* truncates, terminates */
+    CHECK(strcmp(buf, "Mar") == 0);
+}
+
+#define NOW   1792785112u   /* 2026-10-23 */
+#define DAY   86400u
+
+static void test_route_cache(void)
+{
+    static rc_entry_t store[4];
+    route_cache_t c;
+    rc_init(&c, store, 4);
+    route_t r = { 0 };
+    strcpy(r.dest_iata, "LHR");
+
+    CHECK(rc_get(&c, "BAW1", NOW, 7 * DAY, DAY) == NULL);
+    rc_put(&c, "BAW1", RC_FOUND, &r, NOW);
+    rc_put(&c, "XYZ9", RC_UNKNOWN, NULL, NOW);
+    const rc_entry_t *e = rc_get(&c, "BAW1", NOW + 60, 7 * DAY, DAY);
+    CHECK(e != NULL && e->kind == RC_FOUND && strcmp(e->route.dest_iata, "LHR") == 0);
+    e = rc_get(&c, "XYZ9", NOW + 60, 7 * DAY, DAY);
+    CHECK(e != NULL && e->kind == RC_UNKNOWN);
+
+    /* TTLs: unknown expires after a day, found after a week. */
+    CHECK(rc_get(&c, "XYZ9", NOW + 2 * DAY, 7 * DAY, DAY) == NULL);
+    CHECK(rc_get(&c, "BAW1", NOW + 2 * DAY, 7 * DAY, DAY) != NULL);
+    CHECK(rc_get(&c, "BAW1", NOW + 8 * DAY, 7 * DAY, DAY) == NULL);
+    /* Clock not set yet: nothing expires. */
+    CHECK(rc_get(&c, "BAW1", 1000, 7 * DAY, DAY) != NULL);
+
+    /* LRU: fill to 4, touch the oldest, the next insert evicts the true LRU. */
+    rc_init(&c, store, 4);
+    rc_put(&c, "A", RC_UNKNOWN, NULL, NOW);
+    rc_put(&c, "B", RC_UNKNOWN, NULL, NOW);
+    rc_put(&c, "C", RC_UNKNOWN, NULL, NOW);
+    rc_put(&c, "D", RC_UNKNOWN, NULL, NOW);
+    CHECK(rc_get(&c, "A", NOW, DAY, DAY) != NULL);
+    rc_put(&c, "E", RC_UNKNOWN, NULL, NOW);
+    CHECK(rc_count(&c) == 4);
+    CHECK(rc_get(&c, "B", NOW, DAY, DAY) == NULL);
+    CHECK(rc_get(&c, "A", NOW, DAY, DAY) != NULL);
+    CHECK(rc_get(&c, "E", NOW, DAY, DAY) != NULL);
+
+    /* Round trip, and rejection of foreign or truncated data. */
+    static uint8_t buf[1024];
+    CHECK(c.dirty);
+    size_t n = rc_serialize(&c, buf, sizeof(buf));
+    CHECK(n == rc_serialized_size(&c) && n > 0);
+    CHECK(!c.dirty);
+    CHECK(rc_serialize(&c, buf, 8) == 0);
+
+    static rc_entry_t store2[4];
+    route_cache_t c2;
+    rc_init(&c2, store2, 4);
+    CHECK(rc_deserialize(&c2, buf, n));
+    CHECK(rc_count(&c2) == 4);
+    CHECK(rc_get(&c2, "A", NOW, DAY, DAY) != NULL);
+    CHECK(rc_get(&c2, "B", NOW, DAY, DAY) == NULL);
+    /* The LRU clock carries over, so new uses still sort after loaded ones. */
+    CHECK(c2.clock >= c.clock);
+
+    CHECK(!rc_deserialize(&c2, buf, n - 1));
+    CHECK(rc_count(&c2) == 0);
+    buf[0] ^= 0xFF;
+    CHECK(!rc_deserialize(&c2, buf, n));
+    CHECK(!rc_deserialize(&c2, buf, 3));
+}
+
 int main(int argc, char **argv)
 {
     const char *fixtures = argc > 1 ? argv[1] : "test/fixtures";
     test_geo();
     test_adsb_fixture(fixtures);
     test_adsb_edge_cases();
+    test_routes(fixtures);
+    test_route_cache();
     printf("%d checks, %d failed\n", s_run, s_failed);
     return s_failed ? 1 : 0;
 }

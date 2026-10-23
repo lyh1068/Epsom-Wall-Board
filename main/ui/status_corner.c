@@ -4,6 +4,7 @@
 #include <time.h>
 #include "config.h"
 #include "data/aircraft.h"
+#include "data/routes.h"
 #include "net/sntp_time.h"
 #include "net/wifi.h"
 #include "ui/ui_util.h"
@@ -13,7 +14,7 @@
 #define COLOR_WARN   lv_color_hex(0xFFB74D)
 #define COLOR_BAD    lv_color_hex(0xFF5252)
 
-static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed;
+static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes;
 
 void status_corner_create(lv_obj_t *parent, int32_t width)
 {
@@ -23,6 +24,7 @@ void status_corner_create(lv_obj_t *parent, int32_t width)
     s_wifi = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_time = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_feed = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
+    s_routes = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     status_corner_refresh();
 }
 
@@ -132,9 +134,33 @@ static void refresh_feed(void)
     ui_set_text_color(s_feed, c);
 }
 
+static void refresh_routes(void)
+{
+    routes_meta_t m;
+    routes_get_meta(&m);
+    char line[96];
+    lv_color_t c = COLOR_TEXT;
+    if (!m.fs_mounted && m.fs_err != ESP_OK) {
+        snprintf(line, sizeof(line), "Routes: %d cached, storage failed (%s)", m.cached, esp_err_to_name(m.fs_err));
+        c = COLOR_WARN;
+    } else if (m.last_err != ESP_OK || (m.http_status != 0 && m.http_status != 200 && m.http_status != 404)) {
+        if (m.last_err == ESP_OK) {
+            snprintf(line, sizeof(line), "Routes: adsbdb HTTP %d, backoff %lu s", m.http_status, (unsigned long)m.backoff_s);
+        } else {
+            snprintf(line, sizeof(line), "Routes: adsbdb %s, backoff %lu s", esp_err_to_name(m.last_err), (unsigned long)m.backoff_s);
+        }
+        c = COLOR_BAD;
+    } else {
+        snprintf(line, sizeof(line), "Routes: %d cached%s", m.cached, m.loaded ? ", restored from flash" : "");
+    }
+    ui_set_text(s_routes, line);
+    ui_set_text_color(s_routes, c);
+}
+
 void status_corner_refresh(void)
 {
     refresh_clock();
     refresh_wifi();
     refresh_feed();
+    refresh_routes();
 }

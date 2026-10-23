@@ -5,6 +5,7 @@
 #include <string.h>
 #include "config.h"
 #include "data/aircraft.h"
+#include "data/routes.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -74,13 +75,16 @@ static uint32_t s_seq;
 static int s_selected = -1;
 static int s_shown;
 static int s_emergency = -1;
+static int s_overhead = -1;
 
 static lv_obj_t *s_scope, *s_sel_ring, *s_banner;
 static lv_obj_t *s_ring_lbl[3];
 static lv_obj_t *s_rwy[RUNWAY_COUNT], *s_rwy_lbl[RUNWAY_COUNT];
 static lv_point_precise_t s_rwy_pts[RUNWAY_COUNT][2];
 static lv_obj_t *s_range_btn[RANGE_COUNT];
-static lv_obj_t *s_detail[6];
+#define DETAIL_LINES 8
+static lv_obj_t *s_detail[DETAIL_LINES];
+static lv_obj_t *s_chip, *s_chip_top, *s_chip_bot;
 
 static double range_nm(void)
 {
@@ -423,7 +427,8 @@ static void render(void)
 {
     const int64_t now = esp_timer_get_time();
     const double r = range_nm(), k = scale();
-    int shown = 0, emergency = -1;
+    int shown = 0, emergency = -1, overhead = -1;
+    double overhead_d = OVERHEAD_NM;
 
     for (int i = 0; i < MAX_SLOTS; i++) {
         slot_t *s = &s_slots[i];
@@ -446,6 +451,10 @@ static void render(void)
                   a->has_track ? s_icons.plane : s_icons.blip,
                   a->has_track ? lround(a->track * 10) : 0);
             shown++;
+            if (d <= overhead_d) {
+                overhead_d = d;
+                overhead = i;
+            }
         } else if (d <= r * RADAR_EDGE_FACTOR) {
             double b = atan2(x, y);     /* bearing from home, radians, 0 = north */
             int32_t rot = lround(b * 1800.0 / M_PI);
@@ -460,6 +469,7 @@ static void render(void)
     }
     s_shown = shown;
     s_emergency = emergency;
+    s_overhead = overhead;
 
     if (s_selected >= 0 && s_slots[s_selected].draw == DRAW_PLANE) {
         const slot_t *s = &s_slots[s_selected];
@@ -494,14 +504,115 @@ static const char *squawk_meaning(const char *sq)
     return "EMERGENCY";
 }
 
+/* Airports drawn on the scope count as "local" for arrival/departure wording. */
+static bool is_local(const char *iata)
+{
+    for (size_t i = 0; iata[0] && i < RUNWAY_COUNT; i++) {
+        if (strcmp(RUNWAYS[i].label, iata) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static const char *code(const char *iata, const char *icao)
+{
+    return iata[0] ? iata : (icao[0] ? icao : "?");
+}
+
+/* Short route for the overhead chip: "LHR arrival", "LGW departure", "MRS > LHR". */
+static void route_short(const char *flight, char *buf, size_t size)
+{
+    route_t r;
+    switch (routes_lookup(flight, &r)) {
+    case ROUTE_ST_FOUND: {
+        const char *tag = route_is_unverified(&r) ? " (unverified)" : "";
+        if (is_local(r.dest_iata)) {
+            snprintf(buf, size, "%s arrival%s", r.dest_iata, tag);
+        } else if (is_local(r.origin_iata)) {
+            snprintf(buf, size, "%s departure%s", r.origin_iata, tag);
+        } else {
+            snprintf(buf, size, "%s " LV_SYMBOL_RIGHT " %s%s", code(r.origin_iata, r.origin_icao),
+                     code(r.dest_iata, r.dest_icao), tag);
+        }
+        break;
+    }
+    case ROUTE_ST_PENDING:
+        snprintf(buf, size, "route...");
+        break;
+    default:
+        snprintf(buf, size, "route unknown");
+        break;
+    }
+}
+
+/* Full route for the detail panel: codes on one line, cities and airline below. */
+static void route_long(const char *flight, char *codes, char *names, size_t size)
+{
+    route_t r;
+    switch (routes_lookup(flight, &r)) {
+    case ROUTE_ST_FOUND:
+        snprintf(codes, size, "%s " LV_SYMBOL_RIGHT " %s%s", code(r.origin_iata, r.origin_icao),
+                 code(r.dest_iata, r.dest_icao), route_is_unverified(&r) ? "  (unverified)" : "");
+        snprintf(names, size, "%s to %s%s%s", r.origin_city[0] ? r.origin_city : "?",
+                 r.dest_city[0] ? r.dest_city : "?", r.airline_name[0] ? "  " "\xE2\x80\xA2" "  " : "", r.airline_name);
+        break;
+    case ROUTE_ST_PENDING:
+        snprintf(codes, size, "Route: looking up...");
+        names[0] = '\0';
+        break;
+    case ROUTE_ST_UNKNOWN:
+        snprintf(codes, size, "Route unknown");
+        snprintf(names, size, "adsbdb has no route for this callsign");
+        break;
+    case ROUTE_ST_ERROR:
+        snprintf(codes, size, "Route lookup failed");
+        snprintf(names, size, "will retry");
+        break;
+    case ROUTE_ST_NO_CALLSIGN:
+        snprintf(codes, size, "No callsign to look up");
+        names[0] = '\0';
+        break;
+    }
+}
+
+static void refresh_chip(void)
+{
+    bool show = s_selected < 0 && s_overhead >= 0;
+    ui_set_hidden(s_chip, !show);
+    if (!show) {
+        return;
+    }
+    const adsb_aircraft_t *a = &s_slots[s_overhead].ac;
+    char top[64], bot[96], alt[16], rt[40];
+    snprintf(top, sizeof(top), "Overhead  %s  %s", a->flight[0] ? a->flight : a->hex, a->type);
+    fmt_thousands(alt, sizeof(alt), a->alt_baro);
+    route_short(a->flight, rt, sizeof(rt));
+    const char *trend = !a->has_rate || abs(a->baro_rate) < 200 ? "" : (a->baro_rate > 0 ? " " LV_SYMBOL_UP : " " LV_SYMBOL_DOWN);
+    double b = fmod(atan2(s_slots[s_overhead].x, s_slots[s_overhead].y) * 180.0 / M_PI + 360.0, 360.0);
+    snprintf(bot, sizeof(bot), "%s ft%s  " "\xE2\x80\xA2" "  %s  " "\xE2\x80\xA2" "  %.1f nm %s",
+             a->has_alt ? alt : "?", trend, rt, hypot(s_slots[s_overhead].x, s_slots[s_overhead].y), geo_compass16(b));
+    ui_set_text(s_chip_top, top);
+    ui_set_text(s_chip_bot, bot);
+}
+
+static void on_chip_clicked(lv_event_t *e)
+{
+    if (s_overhead >= 0) {
+        s_selected = s_overhead;
+    }
+}
+
 static void refresh_panel(void)
 {
-    char l[6][96];
+    char l[DETAIL_LINES][96];
     if (s_selected < 0) {
         snprintf(l[0], sizeof(l[0]), "%d aircraft", s_shown);
         snprintf(l[1], sizeof(l[1]), "within %d nm of home", (int)range_nm());
         snprintf(l[2], sizeof(l[2]), "Tap a plane for details");
-        l[3][0] = l[4][0] = l[5][0] = '\0';
+        for (int i = 3; i < DETAIL_LINES; i++) {
+            l[i][0] = '\0';
+        }
     } else {
         const slot_t *s = &s_slots[s_selected];
         const adsb_aircraft_t *a = &s->ac;
@@ -533,15 +644,18 @@ static void refresh_panel(void)
         double b = fmod(atan2(s->x, s->y) * 180.0 / M_PI + 360.0, 360.0);
         snprintf(l[4], sizeof(l[4]), "%.1f nm %s of home", d, geo_compass16(b));
 
+        route_long(a->flight, l[5], l[6], sizeof(l[5]));
+
         if (adsb_is_emergency_squawk(a->squawk)) {
-            snprintf(l[5], sizeof(l[5]), "Squawk %s  %s", a->squawk, squawk_meaning(a->squawk));
+            snprintf(l[7], sizeof(l[7]), "Squawk %s  %s", a->squawk, squawk_meaning(a->squawk));
         } else {
-            snprintf(l[5], sizeof(l[5]), "Squawk %s  " "\xE2\x80\xA2" "  hex %s", a->squawk[0] ? a->squawk : "----", a->hex);
+            snprintf(l[7], sizeof(l[7]), "Squawk %s  " "\xE2\x80\xA2" "  hex %s", a->squawk[0] ? a->squawk : "----", a->hex);
         }
     }
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < DETAIL_LINES; i++) {
         ui_set_text(s_detail[i], l[i]);
     }
+    refresh_chip();
 
     if (s_emergency >= 0) {
         const adsb_aircraft_t *a = &s_slots[s_emergency].ac;
@@ -583,19 +697,34 @@ static void build_panel(lv_obj_t *screen)
     lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(panel, PANEL_PAD, 0);
 
-    static const int y[6] = { 0, 44, 78, 108, 138, 172 };
-    for (int i = 0; i < 6; i++) {
-        const lv_font_t *f = i == 0 ? &lv_font_montserrat_28 : (i == 5 ? &lv_font_montserrat_14 : &lv_font_montserrat_20);
-        s_detail[i] = ui_fixed_label(panel, f, CONTENT_W, i == 0 ? lv_color_white() : C_TEXT);
+    /* callsign, type/reg, altitude, speed, distance, route, route names, squawk */
+    static const int y[DETAIL_LINES] = { 0, 42, 72, 100, 128, 158, 188, 208 };
+    for (int i = 0; i < DETAIL_LINES; i++) {
+        const lv_font_t *f = i == 0 ? &lv_font_montserrat_28 : (i >= 6 ? &lv_font_montserrat_14 : &lv_font_montserrat_20);
+        s_detail[i] = ui_fixed_label(panel, f, CONTENT_W, i == 0 ? lv_color_white() : (i >= 6 ? C_DIM : C_TEXT));
         lv_obj_set_pos(s_detail[i], 0, y[i]);
     }
 
+    /* Overhead chip (PLAN.md §5.1), here until the Morning page exists. Sits
+     * over the empty detail lines when nothing is selected. */
+    s_chip = lv_button_create(panel);
+    lv_obj_set_size(s_chip, CONTENT_W, 84);
+    lv_obj_set_pos(s_chip, 0, 110);
+    lv_obj_set_style_bg_color(s_chip, lv_color_hex(0x1A237E), 0);
+    lv_obj_set_style_shadow_width(s_chip, 0, 0);
+    lv_obj_set_style_pad_all(s_chip, 12, 0);
+    lv_obj_add_event_cb(s_chip, on_chip_clicked, LV_EVENT_CLICKED, NULL);
+    s_chip_top = ui_fixed_label(s_chip, &lv_font_montserrat_20, CONTENT_W - 24, lv_color_white());
+    s_chip_bot = ui_fixed_label(s_chip, &lv_font_montserrat_14, CONTENT_W - 24, C_TEXT);
+    lv_obj_set_pos(s_chip_bot, 0, 34);
+    lv_obj_set_hidden(s_chip, true);
+
     lv_obj_t *rl = text(panel, &lv_font_montserrat_14, C_DIM, "RANGE");
-    lv_obj_set_pos(rl, 0, 226);
+    lv_obj_set_pos(rl, 0, 238);
     for (int i = 0; i < RANGE_COUNT; i++) {
         lv_obj_t *b = lv_button_create(panel);
         lv_obj_set_size(b, 150, 56);
-        lv_obj_set_pos(b, i * 168, 250);
+        lv_obj_set_pos(b, i * 168, 260);
         lv_obj_set_style_bg_color(b, lv_color_hex(0x263238), 0);
         lv_obj_set_style_bg_color(b, lv_color_hex(0x2E7D32), LV_STATE_CHECKED);
         lv_obj_set_style_shadow_width(b, 0, 0);
@@ -614,7 +743,7 @@ static void build_panel(lv_obj_t *screen)
     for (int i = 0; i < 4; i++) {
         lv_obj_t *l = text(panel, &lv_font_montserrat_14, lv_color_hex(key[i].c), "");
         lv_label_set_text_fmt(l, "\xE2\x80\xA2 %s", key[i].t);
-        lv_obj_set_pos(l, i * 128, 330);
+        lv_obj_set_pos(l, i * 128, 336);
     }
 
     lv_obj_t *status = plain_obj(panel);

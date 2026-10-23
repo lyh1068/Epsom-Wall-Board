@@ -1,5 +1,6 @@
 idf_component_register(SRCS "app_main.c"
                             "data/adsb_parse.c" "data/aircraft.c"
+                            "data/route_cache.c" "data/route_parse.c" "data/routes.c"
                             "geo/geo.c"
                             "hw/rx8130.c"
                             "net/http_json.c" "net/sntp_time.c" "net/wifi.c"

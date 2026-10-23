@@ -7,4 +7,7 @@ dependencies:
   # and the SDIO pins fall back to EV-board defaults.
   espressif/esp_hosted: ">=2.12.10,<3.0"
   espressif/esp_wifi_remote: "*"
+  # Route cache on flash. LittleFS rather than SPIFFS: a wall board gets
+  # unplugged mid-write, and LittleFS is power-loss safe.
+  joltwallet/littlefs: "^1.23.1"
 description: Epsom Wall Board

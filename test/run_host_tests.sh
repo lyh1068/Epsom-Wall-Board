@@ -18,6 +18,8 @@ cc -std=c11 -Wall -Wextra -Werror -O1 -g $san \
     "$root/test/host/test_main.c" \
     "$root/main/geo/geo.c" \
     "$root/main/data/adsb_parse.c" \
+    "$root/main/data/route_parse.c" \
+    "$root/main/data/route_cache.c" \
     "$out/cJSON.o" \
     -lm -o "$out/test_main"
 

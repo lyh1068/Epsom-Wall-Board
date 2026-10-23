@@ -1,6 +1,7 @@
-# Name,   Type, SubType, Offset,  Size
-# 16 MB flash. One 4 MB app for now; the rest is left free for the Phase 8 OTA
-# slots and a route-cache filesystem.
-nvs,      data, nvs,     0x9000,  0x6000
-phy_init, data, phy,     0xf000,  0x1000
-factory,  app,  factory, 0x10000, 4M
+# Name,   Type, SubType,  Offset,   Size
+# 16 MB flash. One 4 MB app for now; the space after storage is left free for
+# the Phase 8 OTA slots.
+nvs,      data, nvs,      0x9000,   0x6000
+phy_init, data, phy,      0xf000,   0x1000
+factory,  app,  factory,  0x10000,  4M
+storage,  data, littlefs, 0x410000, 1M

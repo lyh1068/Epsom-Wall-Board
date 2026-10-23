@@ -21,3 +21,15 @@
 /* Dead-reckon no further than this past a position report. */
 #define ADSB_MAX_EXTRAPOLATE_S  60
 #define ADSB_MAX_AIRCRAFT       128
+
+/* adsbdb route lookups (PLAN.md §4: on demand, cached). */
+#define ROUTES_CACHE_SIZE       512
+#define ROUTES_TTL_FOUND_S      (7 * 86400)
+#define ROUTES_TTL_UNKNOWN_S    86400
+#define ROUTES_MIN_INTERVAL_MS  2000
+#define ROUTES_BACKOFF_MAX_S    300
+/* Flash wear: write the cache back at most this often, and only if it changed. */
+#define ROUTES_SAVE_EVERY_S     600
+
+/* The "overhead now" chip: nearest airborne aircraft within this distance. */
+#define OVERHEAD_NM             5.0
