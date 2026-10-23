@@ -107,6 +107,11 @@ def main():
     for key in KEYS:
         lines.append("#define %s %s" % (key, c_string(values[key])))
     lines.append("")
+    # <KEY>_SET is 0 while a key is still its placeholder, so the firmware can
+    # show that source as unavailable without knowing the placeholder strings.
+    for key in KEYS:
+        lines.append("#define %s_SET %d" % (key, 0 if key in placeholders else 1))
+    lines.append("")
     body = "\n".join(lines)
 
     # Only touch the file when it actually changes, so a rebuild after an

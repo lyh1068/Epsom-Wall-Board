@@ -8,6 +8,16 @@ CONFIG_IDF_TARGET="esp32p4"
 
 # Tab5 has 16 MB flash (the example ships with 4 MB).
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Wi-Fi is the on-board ESP32-C6 over SDIO (esp_hosted). The board option
+# supplies the SDIO pins; do not hand-set them.
+CONFIG_ESP32P4_TAB5_C6_BOARD=y
+# The Tab5 board option defaults to active-low reset, which on this hardware
+# leaves the C6 unenumerated (sdmmc send_op_cond 0x107). See the tab5-board skill.
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_LOW=n
+CONFIG_ESP_HOSTED_SDIO_RESET_ACTIVE_HIGH=y
 
 CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
 CONFIG_CODEC_I2C_BACKWARD_COMPATIBLE=n

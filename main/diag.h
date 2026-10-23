@@ -11,5 +11,6 @@
 void diag_capture_begin(void);
 void diag_capture_end(void);
 
-/* Draws the panel type and a live touch readout on the top layer. Call under the LVGL lock. */
+/* Draws the panel type, clock, time-sync and Wi-Fi status, and a live touch
+ * readout on the top layer. Call under the LVGL lock. */
 void diag_overlay_create(lv_indev_t *touch);

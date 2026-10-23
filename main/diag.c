@@ -3,7 +3,10 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include "esp_log.h"
+#include "net/sntp_time.h"
+#include "net/wifi.h"
 
 #if CONFIG_LV_FONT_MONTSERRAT_28
 #define DIAG_FONT (&lv_font_montserrat_28)
@@ -24,7 +27,10 @@ static char s_panel[96];
 
 static int capture_vprintf(const char *fmt, va_list args)
 {
-    if (s_panel[0] == '\0') {
+    /* Other tasks (Wi-Fi) log during this window too: match on the format
+     * string first, so only the BSP's line is ever formatted here. */
+    if (s_panel[0] == '\0'
+        && (strstr(fmt, "board version") != NULL || strstr(fmt, "Unsupported ST712x") != NULL)) {
         char line[160];
         va_list copy;
         va_copy(copy, args);
@@ -58,6 +64,9 @@ void diag_capture_end(void)
 }
 
 static lv_obj_t *s_panel_label;
+static lv_obj_t *s_clock_label;
+static lv_obj_t *s_time_label;
+static lv_obj_t *s_wifi_label;
 static lv_obj_t *s_touch_label;
 static lv_obj_t *s_dot;
 static uint32_t s_presses;
@@ -97,6 +106,87 @@ static void touch_poll_cb(lv_timer_t *t)
     show_touch(true);
 }
 
+static void show_clock(void)
+{
+    time_status_t ts;
+    time_get_status(&ts);
+
+    time_t now = time(NULL);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    char buf[48];
+    strftime(buf, sizeof(buf), "%H:%M:%S  %a %d %b %Y %Z", &lt);
+    if (ts.source == CLOCK_SRC_NONE) {
+        lv_label_set_text_fmt(s_clock_label, "%s  (not set)", buf);
+    } else {
+        lv_label_set_text(s_clock_label, buf);
+    }
+
+    static const char *const rtc_txt[] = {
+        [RTC_ST_UNKNOWN] = "?", [RTC_ST_OK] = "ok", [RTC_ST_INVALID] = "lost power",
+        [RTC_ST_MISSING] = "not found", [RTC_ST_ERROR] = "I2C error",
+    };
+    const char *rtc = rtc_txt[ts.rtc];
+    if (ts.rtc_written) {
+        rtc = "updated from NTP";
+    }
+
+    if (ts.sntp_err != ESP_OK) {
+        lv_label_set_text_fmt(s_time_label, "Time: SNTP did not start (%s)  RTC: %s",
+                              esp_err_to_name(ts.sntp_err), rtc);
+    } else if (ts.source == CLOCK_SRC_NTP) {
+        struct tm st;
+        localtime_r(&ts.last_sync, &st);
+        strftime(buf, sizeof(buf), "%H:%M", &st);
+        lv_label_set_text_fmt(s_time_label, "Time: NTP synced %s  RTC: %s", buf, rtc);
+    } else {
+        lv_label_set_text_fmt(s_time_label, "Time: %s, waiting for NTP  RTC: %s",
+                              ts.source == CLOCK_SRC_RTC ? "from RTC" : "no source", rtc);
+    }
+}
+
+static void show_wifi(void)
+{
+    wifi_status_t ws;
+    wifi_get_status(&ws);
+    const char *link = ws.link_up ? "C6 link up" : (ws.link_seen_down ? "C6 link DOWN" : "C6 link ?");
+
+    switch (ws.state) {
+    case WIFI_ST_OFF:
+    case WIFI_ST_STARTING:
+        lv_label_set_text_fmt(s_wifi_label, "Wi-Fi: starting...  %s", link);
+        break;
+    case WIFI_ST_FAILED:
+        lv_label_set_text_fmt(s_wifi_label, "Wi-Fi: %s failed: %s  %s",
+                              ws.init_step, esp_err_to_name(ws.init_err), link);
+        break;
+    case WIFI_ST_NOT_CONFIGURED:
+        lv_label_set_text_fmt(s_wifi_label,
+                              "Wi-Fi: not configured - set WIFI_SSID in .env  %s, MAC %02x:%02x:%02x:%02x:%02x:%02x",
+                              link, ws.mac[0], ws.mac[1], ws.mac[2], ws.mac[3], ws.mac[4], ws.mac[5]);
+        break;
+    case WIFI_ST_CONNECTING:
+        if (ws.last_reason != 0) {
+            lv_label_set_text_fmt(s_wifi_label, "Wi-Fi: retrying \"%s\" (%lu): reason %u, %s",
+                                  ws.ssid, (unsigned long)ws.retries, ws.last_reason,
+                                  wifi_reason_str(ws.last_reason));
+        } else {
+            lv_label_set_text_fmt(s_wifi_label, "Wi-Fi: connecting to \"%s\"...  %s", ws.ssid, link);
+        }
+        break;
+    case WIFI_ST_CONNECTED:
+        lv_label_set_text_fmt(s_wifi_label, "Wi-Fi: \"%s\"  %s  %d dBm", ws.ssid, ws.ip, ws.rssi);
+        break;
+    }
+}
+
+/* The UI only reads module status here; all networking stays in its own tasks. */
+static void status_poll_cb(lv_timer_t *t)
+{
+    show_clock();
+    show_wifi();
+}
+
 static lv_obj_t *make_label(lv_obj_t *parent)
 {
     lv_obj_t *label = lv_label_create(parent);
@@ -132,6 +222,12 @@ void diag_overlay_create(lv_indev_t *touch)
         /* No evidence either way: the BSP's log line was not seen. */
         lv_label_set_text(s_panel_label, "Panel: detection line not captured");
     }
+
+    s_clock_label = make_label(box);
+    s_time_label = make_label(box);
+    s_wifi_label = make_label(box);
+    status_poll_cb(NULL);
+    lv_timer_create(status_poll_cb, 500, NULL);
 
     s_touch_label = make_label(box);
     if (touch == NULL) {

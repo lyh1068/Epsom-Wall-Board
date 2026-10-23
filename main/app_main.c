@@ -6,24 +6,37 @@
 
 /**
  * @file
- * @brief BSP Display Example
- * @details Show an image on the screen with a simple startup animation (LVGL)
- * @example https://espressif.github.io/esp-launchpad/?flashConfigURL=https://espressif.github.io/esp-bsp/config.toml&app=display-
+ * @brief Epsom Wall Board entry point
+ * @details Started from the BSP display example; the LVGL demo is still the
+ *          screen content until Phase 1 replaces it.
  */
 
 #include <stdio.h>
 #include "bsp/esp-bsp.h"
 #include "lvgl.h"
+#include "esp_event.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "diag.h"
+#include "net/sntp_time.h"
+#include "net/wifi.h"
 
 extern void example_lvgl_demo_ui(lv_obj_t *scr);
 
 void app_main(void)
 {
+    /* First, before the display: esp_hosted is already probing for the C6. */
+    wifi_power_on();
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    wifi_start();
+
     diag_capture_begin();
     bsp_display_start();
     diag_capture_end();
+
+    time_init();
+    time_sync_start();
 
     ESP_LOGI("example", "Display LVGL animation");
     bsp_display_lock(0);
