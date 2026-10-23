@@ -1,0 +1,5 @@
+dependencies:
+  # 1.3.x adds the ST7121 panel path and picks the panel at runtime by board
+  # version, keeping ILI9881C. Do not drop to 1.2.0 (see the tab5-board skill).
+  espressif/m5stack_tab5: "~1.3.0"
+description: Epsom Wall Board
