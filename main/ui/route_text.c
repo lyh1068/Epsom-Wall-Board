@@ -66,10 +66,13 @@ void route_long(const char *flight, char *codes, char *names, size_t size)
         snprintf(codes, size, "Route unknown");
         snprintf(names, size, "adsbdb has no route for this callsign");
         break;
-    case ROUTE_ST_ERROR:
-        snprintf(codes, size, "Route lookup failed");
+    case ROUTE_ST_ERROR: {
+        routes_meta_t m;
+        routes_get_meta(&m);
+        snprintf(codes, size, m.rate_limited ? "Route: adsbdb busy" : "Route lookup failed");
         snprintf(names, size, "will retry");
         break;
+    }
     case ROUTE_ST_NO_CALLSIGN:
         snprintf(codes, size, "No callsign to look up");
         names[0] = '\0';

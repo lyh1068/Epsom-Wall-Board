@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <time.h>
 #include "config.h"
+#include "esp_timer.h"
 #include "data/aircraft.h"
 #include "data/routes.h"
 #include "data/bus.h"
@@ -150,9 +151,19 @@ static void refresh_routes(void)
     routes_get_meta(&m);
     char line[96];
     lv_color_t c = COLOR_TEXT;
+    long wait_s = (long)((m.retry_at_us - esp_timer_get_time()) / 1000000);
     if (!m.fs_mounted && m.fs_err != ESP_OK) {
         snprintf(line, sizeof(line), "Routes: %d cached, storage failed (%s)", m.cached, esp_err_to_name(m.fs_err));
         c = COLOR_WARN;
+    } else if (m.rate_limited) {
+        /* Busy, not broken: amber with a countdown, and back to normal once the
+         * wait is over, rather than red until the next lookup happens to succeed. */
+        if (wait_s > 0) {
+            snprintf(line, sizeof(line), "Routes: adsbdb busy (rate-limited), retrying in %ld s", wait_s);
+            c = COLOR_WARN;
+        } else {
+            snprintf(line, sizeof(line), "Routes: %d cached%s", m.cached, m.loaded ? ", restored from flash" : "");
+        }
     } else if (m.last_err != ESP_OK || (m.http_status != 0 && m.http_status != 200 && m.http_status != 404)) {
         if (m.last_err == ESP_OK) {
             snprintf(line, sizeof(line), "Routes: adsbdb HTTP %d, backoff %lu s", m.http_status, (unsigned long)m.backoff_s);

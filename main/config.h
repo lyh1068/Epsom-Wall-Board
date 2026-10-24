@@ -28,6 +28,8 @@
 #define ROUTES_TTL_UNKNOWN_S    86400
 #define ROUTES_MIN_INTERVAL_MS  2000
 #define ROUTES_BACKOFF_MAX_S    300
+/* After HTTP 429: adsbdb's rate-limit window is 60 s, so wait at least that. */
+#define ROUTES_429_BACKOFF_S    60
 /* Flash wear: write the cache back at most this often, and only if it changed. */
 #define ROUTES_SAVE_EVERY_S     600
 

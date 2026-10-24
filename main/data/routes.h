@@ -28,6 +28,8 @@ typedef struct {
     int http_status;        /* last adsbdb status, 0 if none or transport failed */
     esp_err_t last_err;
     uint32_t backoff_s;
+    bool rate_limited;      /* last failure was HTTP 429: busy, not broken */
+    int64_t retry_at_us;    /* esp_timer time the backoff ends */
     time_t last_save;
 } routes_meta_t;
 

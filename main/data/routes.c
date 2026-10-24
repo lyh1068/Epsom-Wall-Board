@@ -277,18 +277,29 @@ static void fetch(http_json_t *http, const char *cs, uint32_t *backoff_s)
     LOCK();
     s_meta.http_status = status;
     s_meta.last_err = err;
+    s_meta.rate_limited = false;
     if (res == ROUTE_PARSE_OK) {
         rc_put(&s_cache, cs, RC_FOUND, &r, now_s());
         *backoff_s = 0;
     } else if (res == ROUTE_PARSE_UNKNOWN) {
         rc_put(&s_cache, cs, RC_UNKNOWN, NULL, now_s());
         *backoff_s = 0;
+    } else if (status == 429) {
+        /* adsbdb counts requests per public IP over a 60 s window (512, then a
+         * 5 min lockout past 1024), and a shared IP can use that up. Retrying
+         * inside the window only adds to the count, so wait at least one. */
+        *backoff_s = *backoff_s >= ROUTES_429_BACKOFF_S
+                     ? (*backoff_s * 2 > ROUTES_BACKOFF_MAX_S ? ROUTES_BACKOFF_MAX_S : *backoff_s * 2)
+                     : ROUTES_429_BACKOFF_S;
+        s_meta.rate_limited = true;
+        fail_record(cs, *backoff_s);
     } else {
-        /* 429, 5xx, transport: back off and let the UI ask again later. */
+        /* 5xx, transport: back off and let the UI ask again later. */
         *backoff_s = *backoff_s ? (*backoff_s * 2 > ROUTES_BACKOFF_MAX_S ? ROUTES_BACKOFF_MAX_S : *backoff_s * 2) : 10;
         fail_record(cs, *backoff_s);
     }
     s_meta.backoff_s = *backoff_s;
+    s_meta.retry_at_us = esp_timer_get_time() + (int64_t)*backoff_s * 1000000;
     pending_remove(cs);
     UNLOCK();
 
