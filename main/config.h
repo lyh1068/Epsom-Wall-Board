@@ -37,5 +37,16 @@
 #define WEATHER_RAIN_PCT        50      /* "next rain" = first hour at or above this */
 #define WEATHER_SPARK_HOURS     12
 
+/* Trains (PLAN.md §5.1). Minutes to walk to Epsom station: anything leaving
+ * sooner is dimmed, and the leave-by bar counts down to "time to leave". */
+#define WALK_MIN                8
+#define TRAINS_ROWS             6
+#define LEAVE_BY_HORIZON_MIN    60
+
+/* Until Phases 6 and 7 bring live data, trains and tube status are demo data,
+ * badged DEMO on screen. */
+#define TRAINS_DEMO             1
+#define TUBE_DEMO               1
+
 /* The "overhead now" chip: nearest airborne aircraft within this distance. */
 #define OVERHEAD_NM             5.0

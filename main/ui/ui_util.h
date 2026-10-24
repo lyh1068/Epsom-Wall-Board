@@ -1,7 +1,18 @@
 #pragma once
 
+#include <stdio.h>
 #include <string.h>
 #include "lvgl.h"
+
+/* 3400 -> "3,400" */
+static inline void ui_fmt_thousands(char *buf, size_t size, int v)
+{
+    if (v >= 1000) {
+        snprintf(buf, size, "%d,%03d", v / 1000, v % 1000);
+    } else {
+        snprintf(buf, size, "%d", v);
+    }
+}
 
 /*
  * LVGL redraws a label whenever its text is set, even to the same string, and

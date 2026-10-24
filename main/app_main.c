@@ -13,7 +13,7 @@
 #include "lvgl.h"
 #include "net/sntp_time.h"
 #include "net/wifi.h"
-#include "ui/radar.h"
+#include "ui/ui_root.h"
 
 static const char *TAG = "main";
 
@@ -39,7 +39,7 @@ void app_main(void)
     bsp_display_lock(0);
     /* Landscape: rotated in software (on the PPA), see the tab5-board skill. */
     bsp_display_rotate(disp, UI_ROTATION);
-    radar_create(lv_screen_active());
+    ui_root_create(lv_screen_active());
     bsp_display_unlock();
     bsp_display_backlight_on();
 }

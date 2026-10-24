@@ -10,6 +10,7 @@
 #include "data/adsb_parse.h"
 #include "data/route_cache.h"
 #include "data/route_parse.h"
+#include "data/trains_logic.h"
 #include "data/weather_parse.h"
 #include "geo/geo.h"
 
@@ -382,6 +383,74 @@ static void test_weather(const char *dir)
     CHECK(strcmp(weather_code_text(1234), "Unknown") == 0);
 }
 
+static train_t mk(const char *std, const char *etd, bool london)
+{
+    train_t t = { 0 };
+    strcpy(t.std, std);
+    strcpy(t.etd, etd);
+    t.london = london;
+    return t;
+}
+
+static void test_trains_logic(void)
+{
+    CHECK(hhmm_to_min("07:48") == 468);
+    CHECK(hhmm_to_min("00:00") == 0);
+    CHECK(hhmm_to_min("23:59") == 1439);
+    CHECK(hhmm_to_min("24:00") == -1);
+    CHECK(hhmm_to_min("7:48") == -1);
+    CHECK(hhmm_to_min("On time") == -1);
+    CHECK(hhmm_to_min("") == -1);
+
+    /* Midnight wrap both ways. */
+    CHECK(minutes_until(23 * 60 + 50, 10) == 20);
+    CHECK(minutes_until(2, 23 * 60 + 58) == -4);
+    CHECK(minutes_until(600, 615) == 15);
+
+    int exp;
+    train_t t = mk("07:55", "07:58", true);
+    CHECK(train_etd(&t, &exp) == ETD_EXPECTED && exp == 478);
+    CHECK(train_delay_min(&t) == 3);
+    t = mk("07:48", "On time", true);
+    CHECK(train_etd(&t, &exp) == ETD_ON_TIME && exp == 468);
+    CHECK(train_delay_min(&t) == 0);
+    t = mk("08:02", "Cancelled", true);
+    CHECK(train_etd(&t, &exp) == ETD_CANCELLED && exp == -1);
+    t = mk("08:10", "Delayed", true);
+    CHECK(train_etd(&t, &exp) == ETD_DELAYED && exp == 490);
+    t = mk("23:55", "00:03", true);             /* delay across midnight */
+    CHECK(train_delay_min(&t) == 8);
+
+    /* The plan's example board at 07:42 with an 8-minute walk. */
+    train_t board[] = {
+        mk("07:48", "On time", true),           /* 6 min away: can't make it */
+        mk("07:55", "07:58", true),             /* 16 min: the one */
+        mk("08:02", "Cancelled", true),
+        mk("08:10", "On time", true),
+    };
+    leave_by_t lb;
+    CHECK(leave_by(board, 4, 7 * 60 + 42, 8, 60, &lb));
+    CHECK(lb.index == 1 && lb.leave_in == 8);
+
+    /* Later: the 07:58 is 9 min away -> leave in 1 ("go now" band). */
+    CHECK(leave_by(board, 4, 7 * 60 + 49, 8, 60, &lb));
+    CHECK(lb.index == 1 && lb.leave_in == 1);
+    /* Exactly walk_min away still counts; one minute later it does not. */
+    CHECK(leave_by(board, 4, 7 * 60 + 50, 8, 60, &lb) && lb.index == 1 && lb.leave_in == 0);
+    CHECK(leave_by(board, 4, 7 * 60 + 51, 8, 60, &lb) && lb.index == 3);   /* skips the cancelled 08:02 */
+
+    /* Non-London services never count; nothing within the horizon -> false. */
+    train_t only_local[] = { mk("08:00", "On time", false) };
+    CHECK(!leave_by(only_local, 1, 7 * 60 + 30, 8, 60, &lb));
+    train_t far[] = { mk("10:00", "On time", true) };
+    CHECK(!leave_by(far, 1, 7 * 60 + 30, 8, 60, &lb));
+    CHECK(!leave_by(board, 0, 0, 8, 60, &lb));
+
+    /* Across midnight: 00:10 seen at 23:55 is 15 min away. */
+    train_t late[] = { mk("00:10", "On time", true) };
+    CHECK(leave_by(late, 1, 23 * 60 + 55, 8, 60, &lb) && lb.leave_in == 7);
+}
+
 int main(int argc, char **argv)
 {
     const char *fixtures = argc > 1 ? argv[1] : "test/fixtures";
@@ -391,6 +460,7 @@ int main(int argc, char **argv)
     test_routes(fixtures);
     test_route_cache();
     test_weather(fixtures);
+    test_trains_logic();
     printf("%d checks, %d failed\n", s_run, s_failed);
     return s_failed ? 1 : 0;
 }

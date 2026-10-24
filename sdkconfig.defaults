@@ -41,6 +41,10 @@ CONFIG_LV_USE_CLIB_STRING=y
 CONFIG_LV_FONT_MONTSERRAT_14=y
 CONFIG_LV_FONT_MONTSERRAT_20=y
 CONFIG_LV_FONT_MONTSERRAT_28=y
+# Morning page: departures and the leave-by bar at 36 px, read from 3 m
+# (PLAN.md §5); the clock at 48.
+CONFIG_LV_FONT_MONTSERRAT_36=y
+CONFIG_LV_FONT_MONTSERRAT_48=y
 
 # The UI is landscape on a portrait panel: rotate on the P4's PPA rather than
 # the CPU, to shorten each flush and the tear window (tab5-board skill).

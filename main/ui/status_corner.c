@@ -186,6 +186,39 @@ static void refresh_weather(void)
     ui_set_text_color(s_weather, c);
 }
 
+void status_compact(char *buf, size_t size, bool *problem)
+{
+    wifi_status_t ws;
+    time_status_t ts;
+    aircraft_meta_t am;
+    weather_meta_t wm;
+    adsb_aircraft_t unused;
+    wifi_get_status(&ws);
+    time_get_status(&ts);
+    aircraft_snapshot(&unused, 0, &am);
+    weather_get(NULL, &wm);
+
+    time_t now = time(NULL);
+    bool ac_bad = am.last_err != ESP_OK || (am.http_status && am.http_status != 200)
+                  || (am.last_ok && now - am.last_ok > 3 * ADSB_POLL_S);
+    bool wx_bad = wm.last_err != ESP_OK || (wm.http_status && wm.http_status != 200)
+                  || (wm.last_ok && now - wm.last_ok > 3 * WEATHER_POLL_S);
+    *problem = ws.state != WIFI_ST_CONNECTED || ts.source != CLOCK_SRC_NTP || ac_bad || wx_bad;
+
+    char wifi[32], sync[24] = "no NTP";
+    if (ws.state == WIFI_ST_CONNECTED) {
+        snprintf(wifi, sizeof(wifi), "Wi-Fi %d dBm", ws.rssi);
+    } else {
+        snprintf(wifi, sizeof(wifi), "Wi-Fi down");
+    }
+    if (ts.source == CLOCK_SRC_NTP) {
+        struct tm st;
+        localtime_r(&ts.last_sync, &st);
+        strftime(sync, sizeof(sync), "synced %H:%M", &st);
+    }
+    snprintf(buf, size, "%s  " "\xE2\x80\xA2" "  %s%s", wifi, sync, (ac_bad || wx_bad) ? "  " "\xE2\x80\xA2" "  data stale" : "");
+}
+
 void status_corner_refresh(void)
 {
     refresh_clock();

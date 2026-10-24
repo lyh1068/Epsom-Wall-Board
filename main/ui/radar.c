@@ -15,7 +15,7 @@
 #include "ui/icons.h"
 #include "ui/status_corner.h"
 #include "ui/ui_util.h"
-#include "ui/weather_view.h"
+#include "ui/route_text.h"
 
 static const char *TAG = "radar";
 
@@ -86,7 +86,6 @@ static lv_point_precise_t s_rwy_pts[RUNWAY_COUNT][2];
 static lv_obj_t *s_range_btn[RANGE_COUNT];
 #define DETAIL_LINES 8
 static lv_obj_t *s_detail[DETAIL_LINES];
-static lv_obj_t *s_chip, *s_chip_top, *s_chip_bot;
 
 static double range_nm(void)
 {
@@ -486,15 +485,6 @@ static void render(void)
 
 /* ---- right-hand panel --------------------------------------------------------------- */
 
-static void fmt_thousands(char *buf, size_t size, int v)
-{
-    if (v >= 1000) {
-        snprintf(buf, size, "%d,%03d", v / 1000, v % 1000);
-    } else {
-        snprintf(buf, size, "%d", v);
-    }
-}
-
 static const char *squawk_meaning(const char *sq)
 {
     if (strcmp(sq, "7500") == 0) {
@@ -504,105 +494,6 @@ static const char *squawk_meaning(const char *sq)
         return "RADIO FAILURE";
     }
     return "EMERGENCY";
-}
-
-/* Airports drawn on the scope count as "local" for arrival/departure wording. */
-static bool is_local(const char *iata)
-{
-    for (size_t i = 0; iata[0] && i < RUNWAY_COUNT; i++) {
-        if (strcmp(RUNWAYS[i].label, iata) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
-static const char *code(const char *iata, const char *icao)
-{
-    return iata[0] ? iata : (icao[0] ? icao : "?");
-}
-
-/* Short route for the overhead chip: "LHR arrival", "LGW departure", "MRS > LHR". */
-static void route_short(const char *flight, char *buf, size_t size)
-{
-    route_t r;
-    switch (routes_lookup(flight, &r)) {
-    case ROUTE_ST_FOUND: {
-        const char *tag = route_is_unverified(&r) ? " (unverified)" : "";
-        if (is_local(r.dest_iata)) {
-            snprintf(buf, size, "%s arrival%s", r.dest_iata, tag);
-        } else if (is_local(r.origin_iata)) {
-            snprintf(buf, size, "%s departure%s", r.origin_iata, tag);
-        } else {
-            snprintf(buf, size, "%s " LV_SYMBOL_RIGHT " %s%s", code(r.origin_iata, r.origin_icao),
-                     code(r.dest_iata, r.dest_icao), tag);
-        }
-        break;
-    }
-    case ROUTE_ST_PENDING:
-        snprintf(buf, size, "route...");
-        break;
-    default:
-        snprintf(buf, size, "route unknown");
-        break;
-    }
-}
-
-/* Full route for the detail panel: codes on one line, cities and airline below. */
-static void route_long(const char *flight, char *codes, char *names, size_t size)
-{
-    route_t r;
-    switch (routes_lookup(flight, &r)) {
-    case ROUTE_ST_FOUND:
-        snprintf(codes, size, "%s " LV_SYMBOL_RIGHT " %s%s", code(r.origin_iata, r.origin_icao),
-                 code(r.dest_iata, r.dest_icao), route_is_unverified(&r) ? "  (unverified)" : "");
-        snprintf(names, size, "%s to %s%s%s", r.origin_city[0] ? r.origin_city : "?",
-                 r.dest_city[0] ? r.dest_city : "?", r.airline_name[0] ? "  " "\xE2\x80\xA2" "  " : "", r.airline_name);
-        break;
-    case ROUTE_ST_PENDING:
-        snprintf(codes, size, "Route: looking up...");
-        names[0] = '\0';
-        break;
-    case ROUTE_ST_UNKNOWN:
-        snprintf(codes, size, "Route unknown");
-        snprintf(names, size, "adsbdb has no route for this callsign");
-        break;
-    case ROUTE_ST_ERROR:
-        snprintf(codes, size, "Route lookup failed");
-        snprintf(names, size, "will retry");
-        break;
-    case ROUTE_ST_NO_CALLSIGN:
-        snprintf(codes, size, "No callsign to look up");
-        names[0] = '\0';
-        break;
-    }
-}
-
-static void refresh_chip(void)
-{
-    bool show = s_selected < 0 && s_overhead >= 0;
-    ui_set_hidden(s_chip, !show);
-    if (!show) {
-        return;
-    }
-    const adsb_aircraft_t *a = &s_slots[s_overhead].ac;
-    char top[64], bot[96], alt[16], rt[40];
-    snprintf(top, sizeof(top), "Overhead  %s  %s", a->flight[0] ? a->flight : a->hex, a->type);
-    fmt_thousands(alt, sizeof(alt), a->alt_baro);
-    route_short(a->flight, rt, sizeof(rt));
-    const char *trend = !a->has_rate || abs(a->baro_rate) < 200 ? "" : (a->baro_rate > 0 ? " " LV_SYMBOL_UP : " " LV_SYMBOL_DOWN);
-    double b = fmod(atan2(s_slots[s_overhead].x, s_slots[s_overhead].y) * 180.0 / M_PI + 360.0, 360.0);
-    snprintf(bot, sizeof(bot), "%s ft%s  " "\xE2\x80\xA2" "  %s  " "\xE2\x80\xA2" "  %.1f nm %s",
-             a->has_alt ? alt : "?", trend, rt, hypot(s_slots[s_overhead].x, s_slots[s_overhead].y), geo_compass16(b));
-    ui_set_text(s_chip_top, top);
-    ui_set_text(s_chip_bot, bot);
-}
-
-static void on_chip_clicked(lv_event_t *e)
-{
-    if (s_overhead >= 0) {
-        s_selected = s_overhead;
-    }
 }
 
 static void refresh_panel(void)
@@ -623,7 +514,7 @@ static void refresh_panel(void)
 
         char alt[16];
         if (a->has_alt) {
-            fmt_thousands(alt, sizeof(alt), a->alt_baro);
+            ui_fmt_thousands(alt, sizeof(alt), a->alt_baro);
             if (a->has_rate && abs(a->baro_rate) >= 200) {
                 snprintf(l[2], sizeof(l[2]), "%s ft  %s %d fpm", alt,
                          a->baro_rate > 0 ? LV_SYMBOL_UP : LV_SYMBOL_DOWN, abs(a->baro_rate));
@@ -657,7 +548,6 @@ static void refresh_panel(void)
     for (int i = 0; i < DETAIL_LINES; i++) {
         ui_set_text(s_detail[i], l[i]);
     }
-    refresh_chip();
 
     if (s_emergency >= 0) {
         const adsb_aircraft_t *a = &s_slots[s_emergency].ac;
@@ -707,20 +597,6 @@ static void build_panel(lv_obj_t *screen)
         lv_obj_set_pos(s_detail[i], 0, y[i]);
     }
 
-    /* Overhead chip (PLAN.md §5.1), here until the Morning page exists. Sits
-     * over the empty detail lines when nothing is selected. */
-    s_chip = lv_button_create(panel);
-    lv_obj_set_size(s_chip, CONTENT_W, 84);
-    lv_obj_set_pos(s_chip, 0, 110);
-    lv_obj_set_style_bg_color(s_chip, lv_color_hex(0x1A237E), 0);
-    lv_obj_set_style_shadow_width(s_chip, 0, 0);
-    lv_obj_set_style_pad_all(s_chip, 12, 0);
-    lv_obj_add_event_cb(s_chip, on_chip_clicked, LV_EVENT_CLICKED, NULL);
-    s_chip_top = ui_fixed_label(s_chip, &lv_font_montserrat_20, CONTENT_W - 24, lv_color_white());
-    s_chip_bot = ui_fixed_label(s_chip, &lv_font_montserrat_14, CONTENT_W - 24, C_TEXT);
-    lv_obj_set_pos(s_chip_bot, 0, 34);
-    lv_obj_set_hidden(s_chip, true);
-
     lv_obj_t *rl = text(panel, &lv_font_montserrat_14, C_DIM, "RANGE");
     lv_obj_set_pos(rl, 0, 238);
     for (int i = 0; i < RANGE_COUNT; i++) {
@@ -748,13 +624,41 @@ static void build_panel(lv_obj_t *screen)
         lv_obj_set_pos(l, i * 128, 336);
     }
 
-    /* Weather, here until the Morning page exists. */
-    weather_view_create(panel, 0, 372, CONTENT_W);
-
     lv_obj_t *status = plain_obj(panel);
     lv_obj_set_size(status, CONTENT_W, LV_SIZE_CONTENT);
     lv_obj_align(status, LV_ALIGN_BOTTOM_LEFT, 0, 0);
     status_corner_create(status, CONTENT_W);
+}
+
+bool radar_overhead(radar_target_t *out)
+{
+    if (s_slots == NULL || s_overhead < 0 || !s_slots[s_overhead].used) {
+        return false;
+    }
+    const slot_t *s = &s_slots[s_overhead];
+    const adsb_aircraft_t *a = &s->ac;
+    strlcpy(out->hex, a->hex, sizeof(out->hex));
+    strlcpy(out->flight, a->flight, sizeof(out->flight));
+    strlcpy(out->type, a->type, sizeof(out->type));
+    out->has_alt = a->has_alt;
+    out->alt_baro = a->alt_baro;
+    out->has_rate = a->has_rate;
+    out->baro_rate = a->baro_rate;
+    out->dist_nm = hypot(s->x, s->y);
+    out->bearing_deg = fmod(atan2(s->x, s->y) * 180.0 / M_PI + 360.0, 360.0);
+    return true;
+}
+
+void radar_select_hex(const char *hex)
+{
+    if (s_slots == NULL) {
+        return;
+    }
+    int idx = slot_find(hex);
+    if (idx >= 0) {
+        s_selected = idx;
+        refresh_panel();
+    }
 }
 
 static void frame_cb(lv_timer_t *t)
@@ -770,7 +674,6 @@ static void frame_cb(lv_timer_t *t)
     if (++frame % PANEL_EVERY == 0) {
         refresh_panel();
         status_corner_refresh();
-        weather_view_refresh();
     }
 }
 
