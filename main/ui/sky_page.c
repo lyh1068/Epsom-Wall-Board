@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include "config.h"
 #include "data/home.h"
 #include "data/weather.h"
 #include "esp_attr.h"
@@ -242,8 +243,15 @@ static void draw_sky(const observer_t *o, time_t now, double sun_alt, double sun
         }
     }
 
-    float lim = mag_limit(sun_alt);
-    float dark = lim < 0 ? 0 : (lim - 1.0f) / 3.5f;     /* 0 in twilight .. 1 at night */
+    /* Two limits: what the eye could see now, and a reference chart that always
+     * shows the bright stars. Stars between the two are drawn ghosted (softer,
+     * with a dark rim so they read against a blue sky): there, but not visible. */
+    float lim_eye = mag_limit(sun_alt);
+    float lim = lim_eye > SKY_CHART_MAG ? lim_eye : SKY_CHART_MAG;
+    float dark = lim_eye < 0 ? 0 : (lim_eye - 1.0f) / 3.5f;     /* 0 in daylight/twilight .. 1 at night */
+    /* Figure lines: pale blue at night, deep blue by day so they show on a blue sky. */
+    const rgb_t line_c = lerp((rgb_t) { 25, 45, 95 }, (rgb_t) { 90, 130, 190 }, dark);
+    const float line_a = 0.30f + 0.15f * dark;
 
     /* Stars: positions for this minute, then figures, then dots on top. */
     static EXT_RAM_BSS_ATTR float px[SKY_STAR_COUNT], py[SKY_STAR_COUNT], palt[SKY_STAR_COUNT];
@@ -254,12 +262,10 @@ static void draw_sky(const observer_t *o, time_t now, double sun_alt, double sun
         palt[i] = (float)alt;
         project(alt, az, &px[i], &py[i]);
     }
-    if (dark > 0) {
-        for (int i = 0; i < SKY_LINE_COUNT; i++) {
-            int a = SKY_LINES[i][0], b = SKY_LINES[i][1];
-            if (palt[a] > 0 && palt[b] > 0) {
-                line(px[a], py[a], px[b], py[b], (rgb_t) { 90, 130, 190 }, 0.45f * dark);
-            }
+    for (int i = 0; i < SKY_LINE_COUNT; i++) {
+        int a = SKY_LINES[i][0], b = SKY_LINES[i][1];
+        if (palt[a] > 0 && palt[b] > 0) {
+            line(px[a], py[a], px[b], py[b], line_c, line_a);
         }
     }
     for (int i = 0; i < SKY_STAR_COUNT; i++) {
@@ -269,8 +275,15 @@ static void draw_sky(const observer_t *o, time_t now, double sun_alt, double sun
         }
         float rad = 3.2f - 0.55f * m;           /* mag -1.5: ~4 px, mag 4.5: ~0.7 px */
         rad = rad < 0.6f ? 0.6f : rad;
-        float alpha = m > lim - 1 ? (lim - m) : 1;   /* fade in near the limit */
-        disc(px[i], py[i], rad, star_colour(SKY_STARS[i].bv10 / 10.0f), alpha);
+        rgb_t c = star_colour(SKY_STARS[i].bv10 / 10.0f);
+        if (m > lim_eye) {
+            /* Reference only: too faint to see in this sky. */
+            disc(px[i], py[i], rad + 1.2f, (rgb_t) { 10, 25, 60 }, 0.45f);
+            disc(px[i], py[i], rad, c, 0.75f);
+        } else {
+            float alpha = m > lim_eye - 1 ? (lim_eye - m) : 1;   /* fade in near the limit */
+            disc(px[i], py[i], rad, c, alpha < 0.75f ? 0.75f : alpha);
+        }
     }
 
     /* Star names: the brightest named stars that are up and drawn. */
@@ -282,7 +295,8 @@ static void draw_sky(const observer_t *o, time_t now, double sun_alt, double sun
         }
     }
 
-    /* Planets: bright ones show in twilight, the rest once it is darker. */
+    /* Planets: always drawn when up; ghosted when the sky is too bright to see
+     * them (bright ones show from sunset, the rest once it is darker). */
     static const rgb_t PCOL[PLANET_COUNT] = {
         { 200, 190, 180 }, { 255, 250, 225 }, { 255, 120, 80 }, { 250, 230, 190 }, { 240, 210, 140 },
     };
@@ -290,13 +304,17 @@ static void draw_sky(const observer_t *o, time_t now, double sun_alt, double sun
         double ra, dec, alt, az;
         astro_planet((planet_t)p, jd, &ra, &dec);
         astro_horizontal(o, jd, ra, dec, &alt, &az);
-        bool bright = p == PLANET_VENUS || p == PLANET_JUPITER;
-        if (alt <= 0 || sun_alt > (bright ? -1 : -6)) {
+        if (alt <= 0) {
             continue;
         }
+        bool bright = p == PLANET_VENUS || p == PLANET_JUPITER;
+        bool seen = sun_alt <= (bright ? -1 : -6);
         float x, y;
         project(alt, az, &x, &y);
-        disc(x, y, bright ? 4.0f : 3.0f, PCOL[p], 1);
+        if (!seen) {
+            disc(x, y, (bright ? 4.0f : 3.0f) + 1.2f, (rgb_t) { 10, 25, 60 }, 0.45f);
+        }
+        disc(x, y, bright ? 4.0f : 3.0f, PCOL[p], seen ? 1 : 0.8f);
         place_label(astro_planet_name((planet_t)p), x, y,
                     lv_color_make((uint8_t)PCOL[p].r, (uint8_t)PCOL[p].g, (uint8_t)PCOL[p].b));
     }
@@ -358,6 +376,14 @@ static void update_panel(const observer_t *o, time_t now, double sun_alt, double
     char buf[96], a[8], b[8];
 
     ui_set_text(s_state, astro_sky_state(sun_alt));
+    if (mag_limit(sun_alt) < SKY_CHART_MAG) {
+        ui_set_text(s_note, "North at the top and east on the left, as when you lie back and look up. "
+                            "The sky is too bright to see most of these now: the outlined stars and "
+                            "planets are drawn where they are, for reference.");
+    } else {
+        ui_set_text(s_note, "North at the top and east on the left, as when you lie back and look up. "
+                            "Stars to magnitude 4.5 (Yale Bright Star Catalogue); fainter ones appear as it gets darker.");
+    }
     fmt_time(buf, sizeof(buf), now);
     ui_set_text(s_time, buf);
 

@@ -61,5 +61,9 @@
 #define BUS_BACKOFF_MAX_S       900
 #define BUS_PER_STOP            3
 
+/* Sky page: stars to this magnitude are always drawn, as a reference chart;
+ * by day and in twilight the ones too faint to see are drawn outlined. */
+#define SKY_CHART_MAG           3.0f
+
 /* The "overhead now" chip: nearest airborne aircraft within this distance. */
 #define OVERHEAD_NM             5.0
