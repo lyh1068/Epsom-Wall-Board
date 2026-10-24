@@ -79,5 +79,13 @@ bool trains_get(train_board_t *out)
 }
 
 #else
-#error "Live trains are Phase 6; set TRAINS_DEMO to 1 until then"
+
+/* No live source until Phase 6 (needs RAIL_DATA_KEY): an empty board, which
+ * the Morning page explains, rather than invented trains. */
+bool trains_get(train_board_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    return false;
+}
+
 #endif

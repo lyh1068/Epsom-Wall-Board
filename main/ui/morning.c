@@ -155,7 +155,9 @@ static void refresh_trains(void)
     }
     for (; r < TRAINS_ROWS; r++) {
         ui_set_text(s_rows[r].time, "");
-        ui_set_text(s_rows[r].dest, r == 0 ? (have ? "No departures" : "Waiting for the clock...") : "");
+        /* No source yet: say what is missing instead of showing invented trains. */
+        static const char *const empty[] = { "No live departures yet", "needs RAIL_DATA_KEY", "(see .env.example)" };
+        ui_set_text(s_rows[r].dest, have ? (r == 0 ? "No departures" : "") : (r < 3 ? empty[r] : ""));
         ui_set_text_color(s_rows[r].dest, C_DIM);
         ui_set_text(s_rows[r].plat, "");
         ui_set_text(s_rows[r].status, "");
@@ -185,7 +187,11 @@ static void refresh_trains(void)
             bg = 0x0D47A1;
         }
     } else {
-        snprintf(bar, sizeof(bar), "No London trains to catch in the next %d min", LEAVE_BY_HORIZON_MIN);
+        if (have) {
+            snprintf(bar, sizeof(bar), "No London trains to catch in the next %d min", LEAVE_BY_HORIZON_MIN);
+        } else {
+            snprintf(bar, sizeof(bar), "Leave-by countdown starts once live trains are set up");
+        }
         bg = 0x37474F;
     }
     ui_set_text(s_bar_text, bar);

@@ -43,8 +43,9 @@
 #define TRAINS_ROWS             6
 #define LEAVE_BY_HORIZON_MIN    60
 
-/* Until Phase 6 brings live data, trains are demo data, badged DEMO on screen. */
-#define TRAINS_DEMO             1
+/* 1 fills the board with a demo timetable (badged DEMO) to check the layout.
+ * 0 shows no trains until Phase 6 brings live data. */
+#define TRAINS_DEMO             0
 
 /* TfL lines for the onward journey, in display order (PLAN.md §4: 2 min). */
 #define TUBE_LINES              "northern,waterloo-city,jubilee,circle"
