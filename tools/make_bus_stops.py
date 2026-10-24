@@ -51,6 +51,7 @@ def main():
         "    const char *letter;     /* the letter on the stop flag */",
         "    const char *routes;     /* TfL routes calling there */",
         "    int distance_m;         /* from the station */",
+        "    float lat, lon;         /* for the map */",
         "} bus_stop_t;",
         "",
         "static const bus_stop_t BUS_STOPS[] = {",
@@ -58,8 +59,8 @@ def main():
     for s in stops:
         letter = s.get("stopLetter") or s.get("indicator", "").replace("Stop ", "")
         routes = " ".join(l["name"] for l in s["lines"])
-        lines.append("    { %s, %s, %s, %s, %d }," % (c_str(s["naptanId"]), c_str(s["commonName"]),
-                                                     c_str(letter), c_str(routes), round(s["distance"])))
+        lines.append("    { %s, %s, %s, %s, %d, %.6ff, %.6ff }," % (c_str(s["naptanId"]), c_str(s["commonName"]),
+                     c_str(letter), c_str(routes), round(s["distance"]), s["lat"], s["lon"]))
     lines += [
         "};",
         "",
