@@ -53,6 +53,18 @@ CONFIG_LVGL_PORT_ENABLE_PPA=y
 # TLS buffers in PSRAM: handshakes are hungry and internal RAM is shared with Wi-Fi.
 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
+# On a crash, save an ELF core dump to the coredump partition. The panic
+# output itself goes to a serial port nobody can read without stopping the
+# app, so this is how a restart gets explained (shown on the status corner).
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+
+# Large static buffers (EXT_RAM_BSS_ATTR) live in PSRAM. Before the scheduler
+# starts, the only heap is the internal RAM between the end of static data and
+# 0x4ff40000, and esp_hosted's constructor needs most of it: 8 KB more static
+# data left no room for the second idle task, and the board would not boot.
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+
 # Performance monitor
 CONFIG_LV_USE_OBSERVER=y
 CONFIG_LV_USE_SYSMON=y

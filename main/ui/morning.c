@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include "esp_attr.h"
 #include "config.h"
 #include "data/trains.h"
 #include "data/tube.h"
@@ -85,7 +86,7 @@ static const char *short_dest(const char *dest)
 
 static void refresh_trains(void)
 {
-    train_board_t b;
+    static EXT_RAM_BSS_ATTR train_board_t b;  /* off the LVGL stack, and out of internal RAM */
     bool have = trains_get(&b);
     ui_set_hidden(s_trains_demo, !(have && b.demo));
 
@@ -231,7 +232,7 @@ static const uint32_t TUBE_COLOR[] = {
     [TUBE_CLOSED] = 0x78909C, [TUBE_UNKNOWN] = 0x78909C,
 };
 
-static tube_status_t s_tube;
+static EXT_RAM_BSS_ATTR tube_status_t s_tube;
 static lv_obj_t *s_reason;     /* reason overlay, NULL when closed */
 
 static void close_reason(lv_event_t *e)
@@ -295,7 +296,7 @@ static void on_pill_clicked(lv_event_t *e)
 
 static void refresh_tube(void)
 {
-    tube_status_t ts;
+    static EXT_RAM_BSS_ATTR tube_status_t ts;  /* off the LVGL stack, and out of internal RAM */
     tube_meta_t m;
     bool have = tube_get(&ts, &m);
     if (have) {

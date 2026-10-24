@@ -10,6 +10,7 @@ idf_component_register(SRCS "app_main.c"
                             "net/http_json.c" "net/sntp_time.c" "net/wifi.c"
                             "ui/icons.c" "ui/morning.c" "ui/radar.c" "ui/route_text.c"
                             "ui/status_corner.c" "ui/ui_root.c" "ui/weather_view.c"
+                            "sys/health.c"
                     INCLUDE_DIRS ".")
 
 # Credentials: tools/gen_secrets.py turns .env (or real environment variables)

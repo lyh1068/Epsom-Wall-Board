@@ -149,5 +149,7 @@ void aircraft_start(void)
         return;
     }
     /* TLS handshakes are stack-hungry. */
-    xTaskCreate(aircraft_task, "aircraft", 12288, NULL, 4, NULL);
+    /* Stack in PSRAM: internal RAM is reserved for Wi-Fi and the display. This
+     * task never writes flash, which a PSRAM-stacked task must not do. */
+    xTaskCreateWithCaps(aircraft_task, "aircraft", 12288, NULL, 4, NULL, MALLOC_CAP_SPIRAM);
 }

@@ -1,7 +1,9 @@
 # Name,   Type, SubType,  Offset,   Size
-# 16 MB flash. One 4 MB app for now; the space after storage is left free for
-# the Phase 8 OTA slots.
+# 16 MB flash. One 4 MB app for now; the space after coredump is left free
+# for the Phase 8 OTA slots.
 nvs,      data, nvs,      0x9000,   0x6000
 phy_init, data, phy,      0xf000,   0x1000
 factory,  app,  factory,  0x10000,  4M
 storage,  data, littlefs, 0x410000, 1M
+# Written on a crash; read with `idf.py coredump-info` (works in download mode).
+coredump, data, coredump, 0x510000, 512K

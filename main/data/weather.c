@@ -2,8 +2,10 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "esp_attr.h"
 #include "config.h"
 #include "data/home.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -14,7 +16,7 @@
 static const char *TAG = "weather";
 
 static SemaphoreHandle_t s_mutex;
-static weather_t s_wx;
+static EXT_RAM_BSS_ATTR weather_t s_wx;
 static bool s_have;
 static weather_meta_t s_meta;
 
@@ -116,5 +118,7 @@ void weather_start(void)
         ESP_LOGE(TAG, "out of memory; weather not started");
         return;
     }
-    xTaskCreate(weather_task, "weather", 12288, NULL, 3, NULL);
+    /* Stack in PSRAM: internal RAM is reserved for Wi-Fi and the display. This
+     * task never writes flash, which a PSRAM-stacked task must not do. */
+    xTaskCreateWithCaps(weather_task, "weather", 12288, NULL, 3, NULL, MALLOC_CAP_SPIRAM);
 }

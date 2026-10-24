@@ -2,8 +2,10 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "esp_attr.h"
 #include "config.h"
 #include "data/tube_parse.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -15,7 +17,7 @@
 static const char *TAG = "tube";
 
 static SemaphoreHandle_t s_mutex;
-static tube_status_t s_status;
+static EXT_RAM_BSS_ATTR tube_status_t s_status;
 static bool s_have;
 static tube_meta_t s_meta = { .keyless = !TFL_APP_KEY_SET };
 
@@ -70,7 +72,7 @@ static bool poll_once(http_json_t *http, tube_status_t *scratch, int *status, es
 static void tube_task(void *arg)
 {
     http_json_t *http = http_json_new(32 * 1024);
-    static tube_status_t scratch;
+    static EXT_RAM_BSS_ATTR tube_status_t scratch;
     unsigned wait_s, backoff_s = 0;
 
     for (;;) {
@@ -115,5 +117,7 @@ void tube_start(void)
         ESP_LOGE(TAG, "out of memory; tube status not started");
         return;
     }
-    xTaskCreate(tube_task, "tube", 12288, NULL, 3, NULL);
+    /* Stack in PSRAM: internal RAM is reserved for Wi-Fi and the display. This
+     * task never writes flash, which a PSRAM-stacked task must not do. */
+    xTaskCreateWithCaps(tube_task, "tube", 12288, NULL, 3, NULL, MALLOC_CAP_SPIRAM);
 }

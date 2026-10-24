@@ -9,6 +9,7 @@
 #include "data/weather.h"
 #include "net/sntp_time.h"
 #include "net/wifi.h"
+#include "sys/health.h"
 #include "ui/ui_util.h"
 
 #define COLOR_TEXT   lv_color_hex(0xB0BEC5)
@@ -16,7 +17,7 @@
 #define COLOR_WARN   lv_color_hex(0xFFB74D)
 #define COLOR_BAD    lv_color_hex(0xFF5252)
 
-static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes, *s_weather, *s_tube;
+static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes, *s_weather, *s_tube, *s_sys, *s_crash;
 
 void status_corner_create(lv_obj_t *parent, int32_t width)
 {
@@ -29,6 +30,9 @@ void status_corner_create(lv_obj_t *parent, int32_t width)
     s_routes = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_weather = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_tube = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
+    s_sys = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
+    s_crash = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_BAD);
+    lv_obj_set_hidden(s_crash, true);
     status_corner_refresh();
 }
 
@@ -227,6 +231,29 @@ static void refresh_tube(void)
     ui_set_text_color(s_tube, c);
 }
 
+/* Uptime, last restart, and headroom: the numbers that explain a restart. */
+static void refresh_system(void)
+{
+    health_sample_lvgl();
+    const health_boot_t *hb = health_boot();
+    uint32_t up = health_uptime_s();
+    char line[128];
+    snprintf(line, sizeof(line), "System: up %luh%02lum  " "\xE2\x80\xA2" "  last reset: %s  " "\xE2\x80\xA2" "  RAM min %u KB  "
+             "\xE2\x80\xA2" "  UI stack %lu B free",
+             (unsigned long)(up / 3600), (unsigned long)(up / 60 % 60), hb->reason,
+             (unsigned)(health_internal_min_free() / 1024), (unsigned long)health_lvgl_stack_free());
+    ui_set_text(s_sys, line);
+    ui_set_text_color(s_sys, hb->crashed ? COLOR_BAD : COLOR_TEXT);
+
+    if (hb->dump) {
+        snprintf(line, sizeof(line), "Crash dump: task %s at 0x%08lx%s  " "\xE2\x80\xA2" "  %lu crash(es) since power-on",
+                 hb->dump_task, (unsigned long)hb->dump_pc, hb->dump_this_fw ? "" : " (older firmware)",
+                 (unsigned long)hb->crashes);
+        ui_set_text(s_crash, line);
+    }
+    ui_set_hidden(s_crash, !hb->dump);
+}
+
 void status_compact(char *buf, size_t size, bool *problem)
 {
     wifi_status_t ws;
@@ -260,7 +287,11 @@ void status_compact(char *buf, size_t size, bool *problem)
         localtime_r(&ts.last_sync, &st);
         strftime(sync, sizeof(sync), "synced %H:%M", &st);
     }
-    snprintf(buf, size, "%s  " "\xE2\x80\xA2" "  %s%s", wifi, sync, (ac_bad || wx_bad) ? "  " "\xE2\x80\xA2" "  data stale" : "");
+    /* A crash restart is a problem until power is cycled: worth seeing at a glance. */
+    const health_boot_t *hb = health_boot();
+    *problem = *problem || hb->crashed;
+    snprintf(buf, size, "%s  " "\xE2\x80\xA2" "  %s%s%s", wifi, sync, (ac_bad || wx_bad) ? "  " "\xE2\x80\xA2" "  data stale" : "",
+             hb->crashed ? "  " "\xE2\x80\xA2" "  restarted after a crash" : "");
 }
 
 void status_corner_refresh(void)
@@ -271,4 +302,5 @@ void status_corner_refresh(void)
     refresh_routes();
     refresh_weather();
     refresh_tube();
+    refresh_system();
 }

@@ -14,19 +14,36 @@
 #include "lvgl.h"
 #include "net/sntp_time.h"
 #include "net/wifi.h"
+#include "sys/health.h"
 #include "ui/ui_root.h"
 
 static const char *TAG = "main";
 
 void app_main(void)
 {
-    /* First, before the display: esp_hosted is already probing for the C6. */
+    /* Why did we restart? Read before anything else can crash again. */
+    health_init();
+
+    /* Then, before the display: esp_hosted is already probing for the C6. */
     wifi_power_on();
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     wifi_start();
 
-    lv_display_t *disp = bsp_display_start();
+    /* The BSP default, except the draw and PPA rotation buffers go in PSRAM.
+     * In internal DMA RAM they took ~216 KB of a ~437 KB heap, and the Wi-Fi
+     * link asserts when it cannot get an RX buffer: that was the restarts. */
+    const bsp_display_cfg_t disp_cfg = {
+        .lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),
+        .buffer_size = BSP_LCD_H_RES * CONFIG_BSP_LCD_DRAW_BUF_HEIGHT,
+        .double_buffer = CONFIG_BSP_LCD_DRAW_BUF_DOUBLE,
+        .flags = {
+            .buff_dma = false,
+            .buff_spiram = true,
+            .sw_rotate = true,
+        },
+    };
+    lv_display_t *disp = bsp_display_start_with_config(&disp_cfg);
     if (disp == NULL) {
         ESP_LOGE(TAG, "display did not start");
     }
