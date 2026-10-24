@@ -5,6 +5,7 @@
 #include "config.h"
 #include "data/aircraft.h"
 #include "data/routes.h"
+#include "data/tube.h"
 #include "data/weather.h"
 #include "net/sntp_time.h"
 #include "net/wifi.h"
@@ -15,7 +16,7 @@
 #define COLOR_WARN   lv_color_hex(0xFFB74D)
 #define COLOR_BAD    lv_color_hex(0xFF5252)
 
-static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes, *s_weather;
+static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes, *s_weather, *s_tube;
 
 void status_corner_create(lv_obj_t *parent, int32_t width)
 {
@@ -27,6 +28,7 @@ void status_corner_create(lv_obj_t *parent, int32_t width)
     s_feed = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_routes = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_weather = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
+    s_tube = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     status_corner_refresh();
 }
 
@@ -186,6 +188,45 @@ static void refresh_weather(void)
     ui_set_text_color(s_weather, c);
 }
 
+static bool tube_bad(const tube_meta_t *m, time_t now)
+{
+    return m->last_err != ESP_OK || (m->http_status && m->http_status != 200)
+           || (m->last_ok && now - m->last_ok > 3 * TUBE_POLL_S);
+}
+
+static void refresh_tube(void)
+{
+    tube_meta_t m;
+    tube_get(NULL, &m);
+    char line[96];
+    lv_color_t c = COLOR_TEXT;
+    long age = m.last_ok ? (long)(time(NULL) - m.last_ok) : -1;
+    if (m.http_status == 401 || m.http_status == 403) {
+        snprintf(line, sizeof(line), "Tube: TfL rejected the key (HTTP %d) - check TFL_APP_KEY", m.http_status);
+        c = COLOR_BAD;
+    } else if (m.last_err != ESP_OK || (m.http_status != 0 && m.http_status != 200)) {
+        if (m.last_err == ESP_OK) {
+            snprintf(line, sizeof(line), "Tube: TfL HTTP %d, retry in %u s", m.http_status, m.backoff_s);
+        } else {
+            snprintf(line, sizeof(line), "Tube: %s, retry in %u s", esp_err_to_name(m.last_err), m.backoff_s);
+        }
+        c = COLOR_BAD;
+    } else if (age < 0) {
+        snprintf(line, sizeof(line), m.waiting_for_wifi ? "Tube: waiting for Wi-Fi" : "Tube: first poll...");
+        c = COLOR_WARN;
+    } else {
+        snprintf(line, sizeof(line), "Tube: TfL, %ld min ago%s", age / 60, m.keyless ? "  (no app key)" : "");
+        if (m.keyless) {
+            c = COLOR_WARN;
+        }
+    }
+    if (tube_bad(&m, time(NULL))) {
+        c = COLOR_BAD;
+    }
+    ui_set_text(s_tube, line);
+    ui_set_text_color(s_tube, c);
+}
+
 void status_compact(char *buf, size_t size, bool *problem)
 {
     wifi_status_t ws;
@@ -203,6 +244,9 @@ void status_compact(char *buf, size_t size, bool *problem)
                   || (am.last_ok && now - am.last_ok > 3 * ADSB_POLL_S);
     bool wx_bad = wm.last_err != ESP_OK || (wm.http_status && wm.http_status != 200)
                   || (wm.last_ok && now - wm.last_ok > 3 * WEATHER_POLL_S);
+    tube_meta_t tm;
+    tube_get(NULL, &tm);
+    wx_bad = wx_bad || tube_bad(&tm, now);
     *problem = ws.state != WIFI_ST_CONNECTED || ts.source != CLOCK_SRC_NTP || ac_bad || wx_bad;
 
     char wifi[32], sync[24] = "no NTP";
@@ -226,4 +270,5 @@ void status_corner_refresh(void)
     refresh_feed();
     refresh_routes();
     refresh_weather();
+    refresh_tube();
 }

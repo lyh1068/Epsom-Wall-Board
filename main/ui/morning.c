@@ -226,10 +226,81 @@ static void refresh_clock(void)
     ui_set_text_color(s_status, problem ? C_RED : C_DIM);
 }
 
+static const uint32_t TUBE_COLOR[] = {
+    [TUBE_GOOD] = 0x00E676, [TUBE_MINOR] = 0xFFB300, [TUBE_SEVERE] = 0xFF1744,
+    [TUBE_CLOSED] = 0x78909C, [TUBE_UNKNOWN] = 0x78909C,
+};
+
+static tube_status_t s_tube;
+static lv_obj_t *s_reason;     /* reason overlay, NULL when closed */
+
+static void close_reason(lv_event_t *e)
+{
+    if (s_reason) {
+        lv_obj_delete_async(s_reason);
+        s_reason = NULL;
+    }
+}
+
+/* Tap a pill: the line's status and TfL's reason text (PLAN.md §5.1). */
+static void on_pill_clicked(lv_event_t *e)
+{
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    if (s_reason != NULL || i >= s_tube.count) {
+        return;
+    }
+    const tube_line_t *l = &s_tube.line[i];
+
+    s_reason = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_reason);
+    lv_obj_set_size(s_reason, lv_pct(100), lv_pct(100));
+    lv_obj_set_style_bg_color(s_reason, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_reason, LV_OPA_70, 0);
+    lv_obj_set_clickable(s_reason, true);       /* swallow taps meant for the page */
+    lv_obj_add_event_cb(s_reason, close_reason, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *box = lv_obj_create(s_reason);
+    lv_obj_remove_style_all(box);
+    lv_obj_set_clickable(box, false);
+    lv_obj_set_scrollable(box, false);
+    lv_obj_set_size(box, 960, LV_SIZE_CONTENT);
+    lv_obj_center(box);
+    lv_obj_set_style_bg_color(box, lv_color_hex(0x1E272E), 0);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(box, 12, 0);
+    lv_obj_set_style_pad_all(box, 28, 0);
+    lv_obj_set_style_border_width(box, 4, 0);
+    lv_obj_set_style_border_side(box, LV_BORDER_SIDE_LEFT, 0);
+    lv_obj_set_style_border_color(box, lv_color_hex(TUBE_COLOR[l->severity]), 0);
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(box, 14, 0);
+
+    lv_obj_t *title = lv_label_create(box);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_label_set_text_fmt(title, "%s: %s", l->name, l->status);
+
+    lv_obj_t *body = lv_label_create(box);
+    lv_obj_set_width(body, lv_pct(100));
+    lv_label_set_long_mode(body, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_set_style_text_font(body, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(body, C_TEXT, 0);
+    lv_label_set_text(body, l->reason[0] ? l->reason : "No further information from TfL.");
+
+    lv_obj_t *hint = lv_label_create(box);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(hint, C_DIM, 0);
+    lv_label_set_text(hint, "Tap anywhere to close");
+}
+
 static void refresh_tube(void)
 {
     tube_status_t ts;
-    bool have = tube_get(&ts);
+    tube_meta_t m;
+    bool have = tube_get(&ts, &m);
+    if (have) {
+        s_tube = ts;
+    }
     ui_set_hidden(s_tube_demo, !(have && ts.demo));
     for (int i = 0; i < TUBE_MAX_LINES; i++) {
         if (!have || i >= ts.count) {
@@ -237,8 +308,7 @@ static void refresh_tube(void)
             continue;
         }
         const tube_line_t *l = &ts.line[i];
-        static const uint32_t dot[] = { [TUBE_GOOD] = 0x00E676, [TUBE_MINOR] = 0xFFB300,
-                                        [TUBE_SEVERE] = 0xFF1744, [TUBE_UNKNOWN] = 0x9E9E9E };
+        const uint32_t *dot = TUBE_COLOR;
         char buf[128];
         /* Good service is just the dot; anything else says what is wrong. */
         if (l->severity == TUBE_GOOD) {
@@ -373,7 +443,8 @@ void morning_create(lv_obj_t *page)
         s_pill[i] = lv_obj_create(row);
         lv_obj_remove_style_all(s_pill[i]);
         lv_obj_set_scrollable(s_pill[i], false);
-        lv_obj_set_clickable(s_pill[i], false);
+        lv_obj_set_clickable(s_pill[i], true);
+        lv_obj_add_event_cb(s_pill[i], on_pill_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)i);
         lv_obj_set_size(s_pill[i], LV_SIZE_CONTENT, 44);
         lv_obj_set_style_bg_color(s_pill[i], lv_color_hex(0x1E272E), 0);
         lv_obj_set_style_bg_opa(s_pill[i], LV_OPA_COVER, 0);

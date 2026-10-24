@@ -3,58 +3,17 @@
 #include <stdint.h>
 #include <string.h>
 #include "cJSON.h"
+#include "data/text_fold.h"
 
 /* Airlines whose callsign suffixes are reused, so adsbdb's route is often
  * stale for them (PLAN.md §4). */
 static const char *const UNVERIFIED_AIRLINES[] = { "EZY", "RYR", "TOM" };
 
-/* U+00C0..U+00FF folded to ASCII; '?' where there is no sensible letter. */
-static const char LATIN1_FOLD[65] =
-    "AAAAAAACEEEEIIII" "DNOOOOOxOUUUUYTs"
-    "aaaaaaaceeeeiiii" "dnooooo/ouuuuyty";
-
-void route_fold_ascii(char *dst, size_t size, const char *utf8)
-{
-    size_t o = 0;
-    const unsigned char *s = (const unsigned char *)utf8;
-    while (*s && o + 1 < size) {
-        uint32_t cp;
-        int n;
-        if (*s < 0x80) {
-            cp = *s;
-            n = 1;
-        } else if ((*s & 0xE0) == 0xC0 && (s[1] & 0xC0) == 0x80) {
-            cp = ((s[0] & 0x1F) << 6) | (s[1] & 0x3F);
-            n = 2;
-        } else if ((*s & 0xF0) == 0xE0 && (s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80) {
-            cp = 0xFFFD;
-            n = 3;
-        } else if ((*s & 0xF8) == 0xF0 && (s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80 && (s[3] & 0xC0) == 0x80) {
-            cp = 0xFFFD;
-            n = 4;
-        } else {
-            cp = 0xFFFD;        /* invalid byte: skip just it */
-            n = 1;
-        }
-        char c;
-        if (cp < 0x80) {
-            c = (char)cp;
-        } else if (cp >= 0xC0 && cp <= 0xFF) {
-            c = LATIN1_FOLD[cp - 0xC0];
-        } else {
-            c = '?';
-        }
-        dst[o++] = c;
-        s += n;
-    }
-    dst[o] = '\0';
-}
-
 static void get_str(char *dst, size_t size, const cJSON *obj, const char *key)
 {
     const cJSON *item = cJSON_GetObjectItemCaseSensitive(obj, key);
     if (cJSON_IsString(item) && item->valuestring != NULL) {
-        route_fold_ascii(dst, size, item->valuestring);
+        text_fold_ascii(dst, size, item->valuestring);
     } else {
         dst[0] = '\0';
     }

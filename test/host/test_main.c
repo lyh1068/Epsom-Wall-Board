@@ -10,7 +10,9 @@
 #include "data/adsb_parse.h"
 #include "data/route_cache.h"
 #include "data/route_parse.h"
+#include "data/text_fold.h"
 #include "data/trains_logic.h"
+#include "data/tube_parse.h"
 #include "data/weather_parse.h"
 #include "geo/geo.h"
 
@@ -254,15 +256,15 @@ static void test_routes(const char *dir)
     CHECK(route_is_unverified(&r));
 
     char buf[16];
-    route_fold_ascii(buf, sizeof(buf), "Z\xC3\xBCrich");          /* Zürich */
+    text_fold_ascii(buf, sizeof(buf), "Z\xC3\xBCrich");          /* Zürich */
     CHECK(strcmp(buf, "Zurich") == 0);
-    route_fold_ascii(buf, sizeof(buf), "\xC3\x85lesund");          /* Ålesund */
+    text_fold_ascii(buf, sizeof(buf), "\xC3\x85lesund");          /* Ålesund */
     CHECK(strcmp(buf, "Alesund") == 0);
-    route_fold_ascii(buf, sizeof(buf), "\xE5\x8C\x97\xE4\xBA\xAC");  /* 北京: two '?' */
+    text_fold_ascii(buf, sizeof(buf), "\xE5\x8C\x97\xE4\xBA\xAC");  /* 北京: two '?' */
     CHECK(strcmp(buf, "??") == 0);
-    route_fold_ascii(buf, sizeof(buf), "bad\xC3");                  /* truncated sequence */
+    text_fold_ascii(buf, sizeof(buf), "bad\xC3");                  /* truncated sequence */
     CHECK(strcmp(buf, "bad?") == 0);
-    route_fold_ascii(buf, 4, "Marseille");                          /* truncates, terminates */
+    text_fold_ascii(buf, 4, "Marseille");                          /* truncates, terminates */
     CHECK(strcmp(buf, "Mar") == 0);
 }
 
@@ -451,6 +453,77 @@ static void test_trains_logic(void)
     CHECK(leave_by(late, 1, 23 * 60 + 55, 8, 60, &lb) && lb.leave_in == 7);
 }
 
+static const tube_line_t *line_by_id(const tube_status_t *t, const char *id)
+{
+    for (int i = 0; i < t->count; i++) {
+        if (strcmp(t->line[i].id, id) == 0) {
+            return &t->line[i];
+        }
+    }
+    return NULL;
+}
+
+static void test_tube(const char *dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/tfl_line_status.json", dir);
+    size_t len;
+    char *json = read_file(path, &len);
+    CHECK(json != NULL);
+    if (json == NULL) {
+        return;
+    }
+
+    /* Saturday 24 Oct 2026: Circle part closure, W&C closed for the weekend. */
+    tube_status_t t;
+    CHECK(tube_parse(json, len, "northern,waterloo-city,jubilee,circle", &t));
+    CHECK(t.count == 4);
+    /* Configured order, not TfL's alphabetical order. */
+    CHECK(strcmp(t.line[0].id, "northern") == 0 && strcmp(t.line[1].id, "waterloo-city") == 0);
+    CHECK(strcmp(t.line[2].id, "jubilee") == 0 && strcmp(t.line[3].id, "circle") == 0);
+
+    const tube_line_t *l = line_by_id(&t, "northern");
+    CHECK(l && l->severity == TUBE_GOOD && strcmp(l->status, "Good Service") == 0 && l->reason[0] == '\0');
+    l = line_by_id(&t, "circle");
+    CHECK(l && l->severity == TUBE_SEVERE && strcmp(l->status, "Part Closure") == 0);
+    CHECK(l && strncmp(l->reason, "CIRCLE LINE:", 12) == 0);
+    /* Two statuses (Planned Closure, Service Closed): both routine, so grey. */
+    l = line_by_id(&t, "waterloo-city");
+    CHECK(l && l->severity == TUBE_CLOSED && strcmp(l->name, "Waterloo & City") == 0);
+
+    /* Fewer lines, and an id TfL did not return, are both fine. */
+    CHECK(tube_parse(json, len, "circle,bakerloo", &t));
+    CHECK(t.count == 1 && strcmp(t.line[0].id, "circle") == 0);
+    free(json);
+
+    /* Worst status wins regardless of order; minor beats a planned closure. */
+    const char *two = "[{\"id\":\"x\",\"name\":\"X\",\"lineStatuses\":["
+                      "{\"statusSeverity\":4,\"statusSeverityDescription\":\"Planned Closure\",\"reason\":\"a\"},"
+                      "{\"statusSeverity\":9,\"statusSeverityDescription\":\"Minor Delays\",\"reason\":\"b\"}]}]";
+    CHECK(tube_parse(two, strlen(two), "x", &t));
+    CHECK(t.line[0].severity == TUBE_MINOR && strcmp(t.line[0].reason, "b") == 0);
+
+    /* Typographic punctuation in reasons is folded for the fonts. */
+    const char *quotes = "[{\"id\":\"y\",\"name\":\"Y\",\"lineStatuses\":[{\"statusSeverity\":6,"
+                         "\"statusSeverityDescription\":\"Severe Delays\","
+                         "\"reason\":\"Y line \xE2\x80\x93 a \xE2\x80\x98signal\xE2\x80\x99 fault\xE2\x80\xA6\"}]}]";
+    CHECK(tube_parse(quotes, strlen(quotes), "y", &t));
+    CHECK(strcmp(t.line[0].reason, "Y line - a 'signal' fault.") == 0);
+
+    const char *nostatus = "[{\"id\":\"z\",\"name\":\"Z\",\"lineStatuses\":[]}]";
+    CHECK(tube_parse(nostatus, strlen(nostatus), "z", &t));
+    CHECK(t.line[0].severity == TUBE_UNKNOWN);
+
+    CHECK(!tube_parse("{\"message\":\"Invalid app_key\"}", 30, "x", &t));
+    CHECK(!tube_parse("nope", 4, "x", &t));
+
+    CHECK(tube_classify(10) == TUBE_GOOD);
+    CHECK(tube_classify(9) == TUBE_MINOR);
+    CHECK(tube_classify(6) == TUBE_SEVERE && tube_classify(2) == TUBE_SEVERE && tube_classify(5) == TUBE_SEVERE);
+    CHECK(tube_classify(20) == TUBE_CLOSED && tube_classify(4) == TUBE_CLOSED);
+    CHECK(tube_classify(99) == TUBE_UNKNOWN);
+}
+
 int main(int argc, char **argv)
 {
     const char *fixtures = argc > 1 ? argv[1] : "test/fixtures";
@@ -461,6 +534,7 @@ int main(int argc, char **argv)
     test_route_cache();
     test_weather(fixtures);
     test_trains_logic();
+    test_tube(fixtures);
     printf("%d checks, %d failed\n", s_run, s_failed);
     return s_failed ? 1 : 0;
 }

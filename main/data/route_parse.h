@@ -34,7 +34,3 @@ route_parse_result_t route_parse(const char *json, size_t len, route_t *out);
  * the route is missing.
  */
 bool route_is_unverified(const route_t *r);
-
-/* Copy UTF-8 into an ASCII buffer: accented Latin letters lose their accent,
- * anything else outside ASCII becomes '?'. Always NUL-terminates. */
-void route_fold_ascii(char *dst, size_t size, const char *utf8);

@@ -43,10 +43,13 @@
 #define TRAINS_ROWS             6
 #define LEAVE_BY_HORIZON_MIN    60
 
-/* Until Phases 6 and 7 bring live data, trains and tube status are demo data,
- * badged DEMO on screen. */
+/* Until Phase 6 brings live data, trains are demo data, badged DEMO on screen. */
 #define TRAINS_DEMO             1
-#define TUBE_DEMO               1
+
+/* TfL lines for the onward journey, in display order (PLAN.md §4: 2 min). */
+#define TUBE_LINES              "northern,waterloo-city,jubilee,circle"
+#define TUBE_POLL_S             120
+#define TUBE_BACKOFF_MAX_S      900
 
 /* The "overhead now" chip: nearest airborne aircraft within this distance. */
 #define OVERHEAD_NM             5.0

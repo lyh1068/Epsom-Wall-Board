@@ -6,6 +6,7 @@
 #include "config.h"
 #include "data/aircraft.h"
 #include "data/routes.h"
+#include "data/tube.h"
 #include "data/weather.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -35,6 +36,7 @@ void app_main(void)
     aircraft_start();
     routes_start();
     weather_start();
+    tube_start();
 
     bsp_display_lock(0);
     /* Landscape: rotated in software (on the PPA), see the tab5-board skill. */
