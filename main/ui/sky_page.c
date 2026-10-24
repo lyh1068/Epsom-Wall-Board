@@ -418,10 +418,9 @@ static void tick_cb(lv_timer_t *t)
         ui_set_text(s_state, "Waiting for the clock...");
         return;
     }
-    /* Off screen: skip the work, and redraw the moment it slides into view. */
-    lv_area_t a;
-    lv_obj_get_coords(s_page, &a);
-    if (a.x2 < 0 || a.x1 >= 1280) {
+    /* Not the page on screen: skip the work, and redraw within a second of it appearing. */
+    if (lv_obj_is_hidden(s_page)) {
+        s_drawn_minute = -1;
         return;
     }
     time_t now = time(NULL);

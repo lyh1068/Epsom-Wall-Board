@@ -34,9 +34,11 @@ void app_main(void)
     /* The BSP default, except the draw and PPA rotation buffers go in PSRAM.
      * In internal DMA RAM they took ~216 KB of a ~437 KB heap, and the Wi-Fi
      * link asserts when it cannot get an RX buffer: that was the restarts. */
+    /* 240 lines rather than the BSP's 50: a full-screen redraw (a page switch)
+     * is rendered, rotated and copied in ~6 passes instead of ~26. */
     const bsp_display_cfg_t disp_cfg = {
         .lvgl_port_cfg = ESP_LVGL_PORT_INIT_CONFIG(),
-        .buffer_size = BSP_LCD_H_RES * CONFIG_BSP_LCD_DRAW_BUF_HEIGHT,
+        .buffer_size = BSP_LCD_H_RES * 240,
         .double_buffer = CONFIG_BSP_LCD_DRAW_BUF_DOUBLE,
         .flags = {
             .buff_dma = false,
