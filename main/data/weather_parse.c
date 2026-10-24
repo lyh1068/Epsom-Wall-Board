@@ -32,6 +32,9 @@ bool weather_parse(const char *json, size_t len, weather_t *out)
     if (get_num(cur, "time", &t) && get_num(cur, "temperature_2m", &temp) && get_num(cur, "weather_code", &code)
         && cJSON_IsArray(ht) && cJSON_IsArray(htemp) && cJSON_IsArray(hpop) && cJSON_IsArray(hcode)) {
         get_num(cur, "is_day", &day);
+        double cloud = -1;
+        get_num(cur, "cloud_cover", &cloud);
+        out->cloud = (int)cloud;
         out->time = (time_t)t;
         out->temp_c = (float)temp;
         out->code = (int)code;

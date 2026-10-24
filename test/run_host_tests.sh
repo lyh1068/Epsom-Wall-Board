@@ -25,6 +25,7 @@ cc -std=c11 -Wall -Wextra -Werror -O1 -g $san \
     "$root/main/data/text_fold.c" \
     "$root/main/data/tube_parse.c" \
     "$root/main/data/bus_parse.c" \
+    "$root/main/sky/astro.c" \
     "$out/cJSON.o" \
     -lm -o "$out/test_main"
 

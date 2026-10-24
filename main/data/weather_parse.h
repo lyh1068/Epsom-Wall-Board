@@ -18,6 +18,7 @@ typedef struct {
     float temp_c;
     int code;               /* WMO weather code */
     bool is_day;
+    int cloud;              /* current cloud cover %, -1 if not reported */
     int hours;              /* valid entries below */
     time_t h_time[WX_HOURS];
     float h_temp[WX_HOURS];

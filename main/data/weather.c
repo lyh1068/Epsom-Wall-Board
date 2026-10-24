@@ -47,7 +47,7 @@ static bool poll_once(http_json_t *http, int *status, esp_err_t *err)
     home_query_coords(where, sizeof(where), "&longitude=");
     snprintf(url, sizeof(url),
              "https://api.open-meteo.com/v1/forecast?latitude=%s"
-             "&current=temperature_2m,weather_code,is_day"
+             "&current=temperature_2m,weather_code,is_day,cloud_cover"
              "&hourly=temperature_2m,precipitation_probability,weather_code"
              "&forecast_hours=%d&timeformat=unixtime&timezone=GMT", where, WX_HOURS);
 

@@ -3,16 +3,18 @@
 #include "ui/bus_page.h"
 #include "ui/morning.h"
 #include "ui/radar.h"
+#include "ui/sky_page.h"
 #include "ui/weather_page.h"
 
 /* Pages left to right; swipe between them. The order is only this table. */
-enum { PAGE_MORNING, PAGE_RADAR, PAGE_BUSES, PAGE_WEATHER, PAGE_COUNT };
+enum { PAGE_MORNING, PAGE_RADAR, PAGE_BUSES, PAGE_WEATHER, PAGE_SKY, PAGE_COUNT };
 
 static void (*const PAGE_CREATE[PAGE_COUNT])(lv_obj_t *) = {
     [PAGE_MORNING] = morning_create,
     [PAGE_RADAR] = radar_create,
     [PAGE_BUSES] = bus_page_create,
     [PAGE_WEATHER] = weather_page_create,
+    [PAGE_SKY] = sky_page_create,
 };
 
 #define DOT         12

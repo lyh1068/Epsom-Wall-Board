@@ -16,6 +16,7 @@
 #include "data/tube_parse.h"
 #include "data/weather_parse.h"
 #include "geo/geo.h"
+#include "sky/astro.h"
 
 static int s_failed, s_run;
 
@@ -350,6 +351,7 @@ static void test_weather(const char *dir)
     CHECK(w.time == 1792789200);
     CHECK_NEAR(w.temp_c, 8.3, 1e-4);
     CHECK(w.code == 1 && !w.is_day);
+    CHECK(w.cloud == -1);    /* this saved response predates asking for cloud_cover */
     CHECK(strcmp(weather_code_text(w.code), "Mainly clear") == 0);
     CHECK(w.hours == 24);
     CHECK(w.h_time[0] == 1792789200 && w.h_time[23] == 1792789200 + 23 * 3600);
@@ -365,11 +367,12 @@ static void test_weather(const char *dir)
     CHECK(weather_hour_index(&w, w.h_time[23] + 3600) == -1);   /* after it */
 
     /* null probabilities read as unknown, never as rain. */
-    const char *nulls = "{\"current\":{\"time\":0,\"temperature_2m\":1.5,\"weather_code\":61},"
+    const char *nulls = "{\"current\":{\"time\":0,\"temperature_2m\":1.5,\"weather_code\":61,\"cloud_cover\":87},"
                         "\"hourly\":{\"time\":[0,3600],\"temperature_2m\":[1,2],"
                         "\"precipitation_probability\":[null,90],\"weather_code\":[null,61]}}";
     CHECK(weather_parse(nulls, strlen(nulls), &w));
     CHECK(w.hours == 2 && w.h_pop[0] == -1 && w.h_code[0] == -1);
+    CHECK(w.cloud == 87);
     CHECK(w.is_day);    /* missing is_day defaults to day */
     CHECK(weather_next_rain(&w, 0, 50, 24) == 1);
 
@@ -582,6 +585,88 @@ static void test_bus(const char *dir)
     CHECK(strcmp(w, "due") == 0);
 }
 
+/* Angular difference in degrees, wrapping azimuth. */
+static double adiff(double a, double b)
+{
+    double d = fmod(fabs(a - b), 360.0);
+    return d > 180 ? 360 - d : d;
+}
+
+static void test_sky(void)
+{
+    /* Meeus example 12.a: 1987 April 10, 0h UT -> GMST 13h10m46.3668s. */
+    CHECK_NEAR(astro_gmst(2446895.5), (13 + 10 / 60.0 + 46.3668 / 3600.0) * 15, 0.0001);
+
+    /* Meeus example 21.b without proper motion: theta Persei to 2028 Nov 13.19. */
+    double ra, dec;
+    astro_precess(41.054063, 49.227750, 2462088.69, &ra, &dec);
+    CHECK_NEAR(ra, 41.547214, 0.01);
+    CHECK_NEAR(dec, 49.348483, 0.01);
+
+    /* JPL Horizons, observer at Epsom station (51.3343 N, 0.2690 W), airless
+     * apparent az/el, 2026-10-24 12:00 and 20:00 UTC. */
+    const observer_t eps = { 51.3343, -0.2690 };
+    const time_t t12 = 1792843200, t20 = 1792872000;
+    static const struct { int body; double az12, alt12, az20, alt20, tol; } H[] = {
+        { -1,             184.034378, 26.728810, 289.868961, -30.066236, 0.05 },  /* Sun */
+        { PLANET_MERCURY, 165.322945, 16.579282, 268.086494, -25.574513, 0.15 },
+        { PLANET_VENUS,   186.700128, 20.720670, 288.889703, -36.507577, 0.15 },
+        { PLANET_MARS,    269.882469, 23.128427,  15.298886, -19.663383, 0.15 },
+        { PLANET_JUPITER, 260.821163, 25.644104,   7.444434, -24.031874, 0.15 },
+        { PLANET_SATURN,   27.551722, -33.897276, 135.246626, 31.148781, 0.15 },
+    };
+    for (size_t i = 0; i < sizeof(H) / sizeof(H[0]); i++) {
+        for (int k = 0; k < 2; k++) {
+            double jd = astro_jd(k ? t20 : t12), alt, az;
+            if (H[i].body < 0) {
+                astro_sun(jd, &ra, &dec);
+            } else {
+                astro_planet((planet_t)H[i].body, jd, &ra, &dec);
+            }
+            astro_horizontal(&eps, jd, ra, dec, &alt, &az);
+            double want_az = k ? H[i].az20 : H[i].az12, want_alt = k ? H[i].alt20 : H[i].alt12;
+            /* Azimuth error matters less near the zenith; this sky has nothing above 37 deg. */
+            if (adiff(az, want_az) > H[i].tol || fabs(alt - want_alt) > H[i].tol) {
+                s_failed++;
+                printf("FAIL body %d at %s: az %.3f alt %.3f, Horizons az %.3f alt %.3f\n", H[i].body,
+                       k ? "20:00" : "12:00", az, alt, want_az, want_alt);
+            }
+            s_run++;
+        }
+    }
+
+    /* Moon: low-precision series plus parallax, so a looser 0.5 deg. */
+    double alt, az, illum, phase;
+    astro_moon_horizontal(&eps, astro_jd(t12), &alt, &az, &illum, &phase);
+    CHECK(adiff(az, 29.009109) < 0.5 && fabs(alt - -28.801041) < 0.5);
+    astro_moon_horizontal(&eps, astro_jd(t20), &alt, &az, &illum, &phase);
+    CHECK(adiff(az, 129.814932) < 0.5 && fabs(alt - 36.368034) < 0.5);
+    /* Two days before full moon (26 Oct 2026). */
+    CHECK(illum > 0.85 && illum < 1.0 && phase < 45);
+
+    /* Sunrise at Epsom on 24 Oct 2026: about 06:40 UTC (07:40 BST), and the
+     * returned instant really is on the -0.833 deg line. */
+    time_t rise = astro_sun_crossing(&eps, 1792800000 /* 00:00 UTC */, -0.833, true);
+    CHECK(rise > 1792800000 + 6 * 3600 + 20 * 60 && rise < 1792800000 + 7 * 3600);
+    astro_sun(astro_jd(rise), &ra, &dec);
+    astro_horizontal(&eps, astro_jd(rise), ra, dec, &alt, &az);
+    CHECK_NEAR(alt, -0.833, 0.01);
+    CHECK(az > 90 && az < 130);         /* east-south-east in late October */
+    time_t set = astro_sun_crossing(&eps, rise, -0.833, false);
+    CHECK(set > 1792800000 + 16 * 3600 + 30 * 60 && set < 1792800000 + 17 * 3600 + 10 * 60);  /* ~16:49 UTC */
+
+    CHECK(strcmp(astro_sky_state(10), "Day") == 0);
+    CHECK(strcmp(astro_sky_state(-3), "Civil twilight") == 0);
+    CHECK(strcmp(astro_sky_state(-9), "Nautical twilight") == 0);
+    CHECK(strcmp(astro_sky_state(-15), "Astronomical twilight") == 0);
+    CHECK(strcmp(astro_sky_state(-30), "Night") == 0);
+
+    /* Polaris sits within a degree of the latitude, due north. */
+    astro_precess(37.9546, 89.2641, astro_jd(t20), &ra, &dec);
+    astro_horizontal(&eps, astro_jd(t20), ra, dec, &alt, &az);
+    CHECK(fabs(alt - eps.lat) < 1.0 && adiff(az, 0) < 1.5);
+}
+
 int main(int argc, char **argv)
 {
     const char *fixtures = argc > 1 ? argv[1] : "test/fixtures";
@@ -594,6 +679,7 @@ int main(int argc, char **argv)
     test_trains_logic();
     test_tube(fixtures);
     test_bus(fixtures);
+    test_sky();
     printf("%d checks, %d failed\n", s_run, s_failed);
     return s_failed ? 1 : 0;
 }
