@@ -5,6 +5,7 @@
 #include "config.h"
 #include "data/aircraft.h"
 #include "data/routes.h"
+#include "data/bus.h"
 #include "data/tube.h"
 #include "data/weather.h"
 #include "net/sntp_time.h"
@@ -17,7 +18,7 @@
 #define COLOR_WARN   lv_color_hex(0xFFB74D)
 #define COLOR_BAD    lv_color_hex(0xFF5252)
 
-static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes, *s_weather, *s_tube, *s_sys, *s_crash;
+static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes, *s_weather, *s_tube, *s_bus, *s_sys, *s_crash;
 
 void status_corner_create(lv_obj_t *parent, int32_t width)
 {
@@ -30,6 +31,7 @@ void status_corner_create(lv_obj_t *parent, int32_t width)
     s_routes = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_weather = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_tube = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
+    s_bus = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_sys = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_crash = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_BAD);
     lv_obj_set_hidden(s_crash, true);
@@ -231,6 +233,41 @@ static void refresh_tube(void)
     ui_set_text_color(s_tube, c);
 }
 
+static bool bus_bad(const bus_meta_t *m)
+{
+    return m->last_err != ESP_OK || (m->http_status && m->http_status != 200)
+           || m->oldest_s > 3 * BUS_POLL_S;
+}
+
+static void refresh_bus(void)
+{
+    bus_meta_t m;
+    bus_get_meta(&m);
+    char line[96];
+    lv_color_t c = COLOR_TEXT;
+    if (m.last_err != ESP_OK || (m.http_status != 0 && m.http_status != 200)) {
+        if (m.last_err == ESP_OK) {
+            snprintf(line, sizeof(line), "Buses: TfL HTTP %d, retry in %u s", m.http_status, m.backoff_s);
+        } else {
+            snprintf(line, sizeof(line), "Buses: %s, retry in %u s", esp_err_to_name(m.last_err), m.backoff_s);
+        }
+    } else if (m.waiting_for_wifi && m.oldest_s < 0) {
+        snprintf(line, sizeof(line), "Buses: waiting for Wi-Fi");
+        c = COLOR_WARN;
+    } else if (m.oldest_s < 0) {
+        snprintf(line, sizeof(line), "Buses: loading %d stops...", BUS_STOP_COUNT);
+        c = COLOR_WARN;
+    } else {
+        snprintf(line, sizeof(line), "Buses: %d stops, oldest %d s%s", BUS_STOP_COUNT, m.oldest_s,
+                 m.keyless ? "  (no app key)" : "");
+    }
+    if (bus_bad(&m)) {
+        c = COLOR_BAD;
+    }
+    ui_set_text(s_bus, line);
+    ui_set_text_color(s_bus, c);
+}
+
 /* Uptime, last restart, and headroom: the numbers that explain a restart. */
 static void refresh_system(void)
 {
@@ -273,7 +310,9 @@ void status_compact(char *buf, size_t size, bool *problem)
                   || (wm.last_ok && now - wm.last_ok > 3 * WEATHER_POLL_S);
     tube_meta_t tm;
     tube_get(NULL, &tm);
-    wx_bad = wx_bad || tube_bad(&tm, now);
+    bus_meta_t bm;
+    bus_get_meta(&bm);
+    wx_bad = wx_bad || tube_bad(&tm, now) || bus_bad(&bm);
     *problem = ws.state != WIFI_ST_CONNECTED || ts.source != CLOCK_SRC_NTP || ac_bad || wx_bad;
 
     char wifi[32], sync[24] = "no NTP";
@@ -302,5 +341,6 @@ void status_corner_refresh(void)
     refresh_routes();
     refresh_weather();
     refresh_tube();
+    refresh_bus();
     refresh_system();
 }

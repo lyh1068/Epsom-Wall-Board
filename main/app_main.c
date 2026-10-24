@@ -5,6 +5,7 @@
 #include "bsp/esp-bsp.h"
 #include "config.h"
 #include "data/aircraft.h"
+#include "data/bus.h"
 #include "data/routes.h"
 #include "data/tube.h"
 #include "data/weather.h"
@@ -54,6 +55,7 @@ void app_main(void)
     routes_start();
     weather_start();
     tube_start();
+    bus_start();
 
     bsp_display_lock(0);
     /* Landscape: rotated in software (on the PPA), see the tab5-board skill. */

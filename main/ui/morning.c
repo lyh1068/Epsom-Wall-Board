@@ -1,6 +1,7 @@
 #include "morning.h"
 
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -15,12 +16,12 @@
 #include "ui/status_corner.h"
 #include "ui/ui_root.h"
 #include "ui/ui_util.h"
-#include "ui/weather_view.h"
+#include "data/weather.h"
 
 /*
  * Layout, 1280x720 landscape:
  *   left  (0..860):     header + toggle, disruption banner, 6 departure rows
- *   right (880..1260):  status line, clock, date, weather
+ *   right (880..1260):  status line, clock, date, one-line weather
  *   full width below:   leave-by bar, tube pills, overhead chip
  * Departures use 36 px so they read from 3 m (PLAN.md §5).
  */
@@ -52,6 +53,7 @@ static lv_obj_t *s_status, *s_clock, *s_date;
 static lv_obj_t *s_bar, *s_bar_text;
 static lv_obj_t *s_pill[TUBE_MAX_LINES], *s_pill_text[TUBE_MAX_LINES], *s_tube_demo;
 static lv_obj_t *s_chip, *s_chip_text;
+static lv_obj_t *s_wx_now, *s_wx_rain;
 static bool s_london_only;
 static char s_chip_hex[8];
 
@@ -323,6 +325,37 @@ static void refresh_tube(void)
     }
 }
 
+static void refresh_weather(void)
+{
+    static EXT_RAM_BSS_ATTR weather_t w;      /* off the LVGL stack, and out of internal RAM */
+    if (!weather_get(&w, NULL)) {
+        ui_set_text(s_wx_now, "Weather: waiting...");
+        return;
+    }
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%d\xC2\xB0" "C  %s", (int)lroundf(w.temp_c), weather_code_text(w.code));
+    ui_set_text(s_wx_now, buf);
+
+    time_t now = time(NULL);
+    int hour = weather_hour_index(&w, now);
+    int r = weather_next_rain(&w, now, WEATHER_RAIN_PCT, WX_HOURS);
+    if (hour < 0) {
+        snprintf(buf, sizeof(buf), "Forecast out of date");
+    } else if (r < 0) {
+        snprintf(buf, sizeof(buf), "No rain forecast");
+    } else if (r == hour) {
+        snprintf(buf, sizeof(buf), "Rain now (%d%%)", w.h_pop[r]);
+    } else {
+        struct tm at, today;
+        localtime_r(&w.h_time[r], &at);
+        localtime_r(&now, &today);
+        char hhmm[8];
+        strftime(hhmm, sizeof(hhmm), "%H:%M", &at);
+        snprintf(buf, sizeof(buf), "Rain %s%s (%d%%)", at.tm_yday == today.tm_yday ? "from " : "tomorrow ", hhmm, w.h_pop[r]);
+    }
+    ui_set_text(s_wx_rain, buf);
+}
+
 static void refresh_chip(void)
 {
     radar_target_t t;
@@ -358,7 +391,7 @@ static void refresh_cb(lv_timer_t *t)
     refresh_trains();
     refresh_tube();
     refresh_chip();
-    weather_view_refresh();
+    refresh_weather();
 }
 
 /* ---- build ------------------------------------------------------------------------ */
@@ -416,7 +449,9 @@ void morning_create(lv_obj_t *page)
     s_status = label(page, &lv_font_montserrat_14, C_DIM, RIGHT_X, 18, RIGHT_W);
     s_clock = label(page, &lv_font_montserrat_48, lv_color_white(), RIGHT_X, 40, RIGHT_W);
     s_date = label(page, &lv_font_montserrat_28, C_TEXT, RIGHT_X, 100, RIGHT_W);
-    weather_view_create(page, RIGHT_X, 150, RIGHT_W);
+    /* Weather in one glance; the Weather page has the rest. */
+    s_wx_now = label(page, &lv_font_montserrat_28, C_TEXT, RIGHT_X, 156, RIGHT_W);
+    s_wx_rain = label(page, &lv_font_montserrat_20, lv_color_hex(0x4FC3F7), RIGHT_X, 194, RIGHT_W);
 
     /* Leave-by bar. */
     s_bar = lv_obj_create(page);

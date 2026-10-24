@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "data/adsb_parse.h"
+#include "data/bus_parse.h"
 #include "data/route_cache.h"
 #include "data/route_parse.h"
 #include "data/text_fold.h"
@@ -524,6 +525,63 @@ static void test_tube(const char *dir)
     CHECK(tube_classify(99) == TUBE_UNKNOWN);
 }
 
+static void test_bus(const char *dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/tfl_bus_arrivals.json", dir);
+    size_t len;
+    char *json = read_file(path, &len);
+    CHECK(json != NULL);
+    if (json == NULL) {
+        return;
+    }
+
+    /* Epsom High Street (G), Saturday morning: 5 predictions, unsorted. */
+    bus_board_t b;
+    CHECK(bus_parse(json, len, &b));
+    free(json);
+    CHECK(b.count == 5);
+    CHECK(strcmp(b.stop_name, "Epsom High Street") == 0 && strcmp(b.stop_letter, "G") == 0);
+    CHECK(strcmp(b.a[0].line, "406") == 0 && strcmp(b.a[0].dest, "Kingston") == 0 && b.a[0].secs == 236);
+    CHECK(strcmp(b.a[1].line, "S2") == 0 && strcmp(b.a[1].dest, "St Helier Station") == 0);
+    CHECK(strcmp(b.a[2].line, "293") == 0 && b.a[2].secs == 808);
+    for (int i = 1; i < b.count; i++) {
+        CHECK(b.a[i - 1].secs <= b.a[i].secs);
+    }
+
+    /* More than BUS_MAX: keeps the soonest, wherever they sit in the response. */
+    char big[2048] = "[";
+    for (int i = 0; i < BUS_MAX + 4; i++) {
+        char one[96];
+        snprintf(one, sizeof(one), "%s{\"lineName\":\"L%d\",\"destinationName\":\"D\",\"timeToStation\":%d}",
+                 i ? "," : "", i, 1000 - i * 60);
+        strcat(big, one);
+    }
+    strcat(big, "]");
+    CHECK(bus_parse(big, strlen(big), &b));
+    CHECK(b.count == BUS_MAX);
+    CHECK(b.a[0].secs == 1000 - (BUS_MAX + 3) * 60);    /* the last one in the array */
+
+    /* Nothing due (late night): valid, empty, no stop name. */
+    CHECK(bus_parse("[]", 2, &b));
+    CHECK(b.count == 0 && b.stop_name[0] == '\0');
+
+    /* TfL error object, garbage. */
+    const char *err = "{\"$type\":\"Tfl.Apps.Api.Models.ApiError\",\"httpStatusCode\":404}";
+    CHECK(!bus_parse(err, strlen(err), &b));
+    CHECK(!bus_parse("x", 1, &b));
+
+    char w[16];
+    bus_fmt_wait(w, sizeof(w), 59);
+    CHECK(strcmp(w, "due") == 0);
+    bus_fmt_wait(w, sizeof(w), 60);
+    CHECK(strcmp(w, "1 min") == 0);
+    bus_fmt_wait(w, sizeof(w), 808);
+    CHECK(strcmp(w, "13 min") == 0);
+    bus_fmt_wait(w, sizeof(w), -30);                    /* overdue: still "due" */
+    CHECK(strcmp(w, "due") == 0);
+}
+
 int main(int argc, char **argv)
 {
     const char *fixtures = argc > 1 ? argv[1] : "test/fixtures";
@@ -535,6 +593,7 @@ int main(int argc, char **argv)
     test_weather(fixtures);
     test_trains_logic();
     test_tube(fixtures);
+    test_bus(fixtures);
     printf("%d checks, %d failed\n", s_run, s_failed);
     return s_failed ? 1 : 0;
 }

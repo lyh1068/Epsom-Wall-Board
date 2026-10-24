@@ -51,5 +51,12 @@
 #define TUBE_POLL_S             120
 #define TUBE_BACKOFF_MAX_S      900
 
+/* Bus arrivals at the TfL stops within 300 m of Epsom station (data/bus_stops.h,
+ * from tools/make_bus_stops.py). Polled round-robin: one stop every
+ * BUS_POLL_S / BUS_STOP_COUNT seconds, so each refreshes every BUS_POLL_S. */
+#define BUS_POLL_S              60
+#define BUS_BACKOFF_MAX_S       900
+#define BUS_PER_STOP            3
+
 /* The "overhead now" chip: nearest airborne aircraft within this distance. */
 #define OVERHEAD_NM             5.0

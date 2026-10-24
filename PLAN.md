@@ -15,11 +15,12 @@ A two-page touchscreen board that hangs on the wall at home near Epsom station:
 ### In scope
 - Trains from **Epsom (CRS `EPS`) only**.
 - Weather, clock, TfL tube line status, and plane radar.
+- Bus arrivals at **one TfL stop** (added after the original plan). TfL's feed covers TfL routes only (around Epsom: 166, 293, 406, 418, 467, S2); Surrey County Council buses are not in it.
 
 ### Out of scope
 - Home Assistant
 - Bin days
-- Other stations and buses
+- Other stations; non-TfL bus routes
 - Camera, voice, cloud backend
 - Any server or proxy. The device talks to the public APIs directly.
 
@@ -92,6 +93,7 @@ All are free. Verify each endpoint against the official docs before coding, beca
 | Trains | **Rail Data Marketplace**, "Live Departure Board" (Darwin LDBWS, JSON REST). Use `GetDepBoardWithDetails/EPS`, which includes calling points. The base URL and the API-key header are shown on the product's **Specification** tab after subscribing (seen in the wild as `https://api1.raildata.org.uk/1010-live-departure-board-dep/LDBWS/api/20220120/GetDepBoardWithDetails/{crs}`). | API key in header (register at raildata.org.uk; approval may take days) | 60 s (30 s during the commute window) |
 | Weather | **Open-Meteo** `/v1/forecast` with current, hourly temperature, precipitation probability and weather code | None | 15 min |
 | Tube status | **TfL Unified API** `/Line/{ids}/Status`, e.g. `northern,waterloo-city,jubilee,circle` | `app_key` from api-portal.tfl.gov.uk | 2 min |
+| Buses | **TfL Unified API** `/StopPoint/{naptanId}/Arrivals` for `BUS_STOP` in `.env` (default: Epsom High Street stop G, `40004406039A`). Predictions arrive unsorted. | Same `app_key` | 60 s |
 | Aircraft | **adsb.lol** `/v2/point/{lat}/{lon}/{radius_nm}` | None | 10 s |
 | Aircraft fallback | adsb.fi or airplanes.live (same readsb-style JSON); OpenSky `/states/all` with a bounding box needs OAuth2 client credentials, so it's last resort | None / OAuth2 | 10–15 s |
 | Flight route | **adsbdb** `api.adsbdb.com/v0/callsign/{callsign}` → origin and destination plus airline | None | On demand, cached |
@@ -140,6 +142,8 @@ Implementation notes:
 - Optional chime from the speaker at "go now", during weekday commute hours only.
 
 **Weather**: current temperature, icon, the time of the next rain from hourly precipitation probability ≥ 50%, and a 12-hour sparkline.
+
+**Buses** (right column, under the weather): the stop name, then the next four arrivals as route, destination and minutes, counted down on the device between 60 s polls.
 
 **Tube status**: one pill per configured line. Green is good service, amber is minor delays, red is severe delays, suspended or part closure. Tap a pill for the reason text.
 

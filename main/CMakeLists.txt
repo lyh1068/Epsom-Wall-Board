@@ -1,5 +1,6 @@
 idf_component_register(SRCS "app_main.c"
                             "data/adsb_parse.c" "data/aircraft.c"
+                            "data/bus.c" "data/bus_parse.c"
                             "data/home.c"
                             "data/route_cache.c" "data/route_parse.c" "data/routes.c"
                             "data/text_fold.c"
@@ -9,7 +10,8 @@ idf_component_register(SRCS "app_main.c"
                             "hw/rx8130.c"
                             "net/http_json.c" "net/sntp_time.c" "net/wifi.c"
                             "ui/icons.c" "ui/morning.c" "ui/radar.c" "ui/route_text.c"
-                            "ui/status_corner.c" "ui/ui_root.c" "ui/weather_view.c"
+                            "ui/status_corner.c" "ui/ui_root.c"
+                            "ui/bus_page.c" "ui/weather_page.c"
                             "sys/health.c"
                     INCLUDE_DIRS ".")
 
