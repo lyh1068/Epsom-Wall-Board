@@ -15,8 +15,13 @@
 /* Aircraft out to this multiple of the range show as edge arrows. */
 #define RADAR_EDGE_FACTOR       1.5
 
-/* adsb.lol: never faster than this (PLAN.md §4). */
+/* Aircraft feeds: adsb.fi (1 request/s, no daily cap; personal non-commercial
+ * use, credited on screen), falling back to adsb.lol, whose anonymous limit
+ * is 500 requests a day: at 10 s polls that lasted ~83 minutes. Never poll
+ * faster than this (PLAN.md §4). */
 #define ADSB_POLL_S             10
+/* After adsb.lol answers 429 (daily allowance used up), leave it alone this long. */
+#define ADSB_LOL_REST_S         3600
 #define ADSB_BACKOFF_MAX_S      160
 /* Dead-reckon no further than this past a position report. */
 #define ADSB_MAX_EXTRAPOLATE_S  60

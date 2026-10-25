@@ -8,9 +8,9 @@
 #include "geo/geo.h"
 
 /*
- * Aircraft source: polls adsb.lol on its own task and keeps the latest
- * snapshot. The UI copies it out with aircraft_snapshot() and never does
- * networking itself.
+ * Aircraft source: polls adsb.fi on its own task (adsb.lol as a fallback) and
+ * keeps the latest snapshot. The UI copies it out with aircraft_snapshot() and
+ * never does networking itself.
  */
 
 typedef struct {
@@ -23,6 +23,8 @@ typedef struct {
     esp_err_t last_err;     /* last transport/parse error, ESP_OK if none */
     uint32_t backoff_s;     /* current wait before the next poll */
     bool waiting_for_wifi;
+    const char *source;     /* feed of the last success: "adsb.fi" or "adsb.lol"; NULL if none */
+    bool fallback;          /* the last success came from the fallback feed */
 } aircraft_meta_t;
 
 void aircraft_start(void);

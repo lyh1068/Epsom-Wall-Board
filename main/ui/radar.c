@@ -701,6 +701,10 @@ void radar_create(lv_obj_t *screen)
 
     build_static();
 
+    /* adsb.fi's open data terms ask for a credit and a link to its home page. */
+    lv_obj_t *credit = text(s_scope, &lv_font_montserrat_14, C_DIM, "Aircraft data: adsb.fi  (https://adsb.fi)");
+    lv_obj_align(credit, LV_ALIGN_BOTTOM_LEFT, 8, -6);
+
     s_sel_ring = plain_obj(s_scope);
     lv_obj_set_size(s_sel_ring, ICON_SIZE + 12, ICON_SIZE + 12);
     lv_obj_set_style_radius(s_sel_ring, LV_RADIUS_CIRCLE, 0);

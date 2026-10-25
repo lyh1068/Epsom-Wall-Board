@@ -170,6 +170,33 @@ static void test_adsb_fixture(const char *dir)
     free(json);
 }
 
+/* adsb.fi v3 /lat/lon/dist: the primary feed. Same readsb shape as adsb.lol. */
+static void test_adsb_fi_fixture(const char *dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/adsb_fi_v3_point.json", dir);
+    size_t len;
+    char *json = read_file(path, &len);
+    CHECK(json != NULL);
+    if (json == NULL) {
+        return;
+    }
+    static adsb_aircraft_t ac[128];
+    adsb_meta_t meta;
+    int n = adsb_parse(json, len, ac, 128, &meta);
+    free(json);
+    CHECK(n == 78 && meta.total == 78 && meta.skipped == 0);
+    CHECK(meta.now_ms == 1792928312001LL);
+    int ground = 0, tracked = 0;
+    for (int i = 0; i < n; i++) {
+        ground += ac[i].on_ground;
+        tracked += ac[i].has_track;
+        CHECK(ac[i].hex[0] != '\0');
+    }
+    CHECK(ground == 46);
+    CHECK(tracked == 41);
+}
+
 static void test_adsb_edge_cases(void)
 {
     static adsb_aircraft_t ac[8];
@@ -672,6 +699,7 @@ int main(int argc, char **argv)
     const char *fixtures = argc > 1 ? argv[1] : "test/fixtures";
     test_geo();
     test_adsb_fixture(fixtures);
+    test_adsb_fi_fixture(fixtures);
     test_adsb_edge_cases();
     test_routes(fixtures);
     test_route_cache();

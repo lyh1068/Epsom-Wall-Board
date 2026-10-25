@@ -66,14 +66,23 @@ static void *psram_malloc(size_t size)
     return heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
 }
 
-/* Returns true on success. */
-static bool poll_once(http_json_t *http, int *http_status, esp_err_t *err)
+typedef enum { FEED_ADSB_FI, FEED_ADSB_LOL } feed_t;
+
+static const char *const FEED_NAME[] = { "adsb.fi", "adsb.lol" };
+
+/* Returns true on success. Both feeds serve the same readsb JSON. */
+static bool poll_once(feed_t feed, http_json_t *http, int *http_status, esp_err_t *err)
 {
     /* Only a rounded (~1 km) position leaves the board. */
     char url[128], where[32];
     int radius = (int)ceil(s_range_nm * RADAR_EDGE_FACTOR);
-    home_query_coords(where, sizeof(where), "/");
-    snprintf(url, sizeof(url), "https://api.adsb.lol/v2/point/%s/%d", where, radius);
+    if (feed == FEED_ADSB_FI) {
+        home_query_coords(where, sizeof(where), "/lon/");
+        snprintf(url, sizeof(url), "https://opendata.adsb.fi/api/v3/lat/%s/dist/%d", where, radius);
+    } else {
+        home_query_coords(where, sizeof(where), "/");
+        snprintf(url, sizeof(url), "https://api.adsb.lol/v2/point/%s/%d", where, radius);
+    }
 
     const char *body;
     size_t len;
@@ -98,15 +107,19 @@ static bool poll_once(http_json_t *http, int *http_status, esp_err_t *err)
     s_meta.seq++;
     s_meta.fetched_us = esp_timer_get_time();
     s_meta.last_ok = time(NULL);
+    s_meta.source = FEED_NAME[feed];
+    s_meta.fallback = feed != FEED_ADSB_FI;
     xSemaphoreGive(s_mutex);
-    ESP_LOGI(TAG, "%d aircraft (%d received, %u bytes)", n, pm.total, (unsigned)len);
+    ESP_LOGI(TAG, "%s: %d aircraft (%d received, %u bytes)", FEED_NAME[feed], n, pm.total, (unsigned)len);
     return true;
 }
 
 static void aircraft_task(void *arg)
 {
-    http_json_t *http = http_json_new(MAX_BODY);
+    /* One kept-alive connection per feed. */
+    http_json_t *fi = http_json_new(MAX_BODY), *lol = http_json_new(MAX_BODY);
     uint32_t backoff_s = ADSB_POLL_S;
+    int64_t lol_rest_until = 0;
 
     for (;;) {
         wifi_status_t ws;
@@ -119,14 +132,28 @@ static void aircraft_task(void *arg)
 
         int http_status = 0;
         esp_err_t err = ESP_OK;
-        if (http != NULL && poll_once(http, &http_status, &err)) {
+        bool ok = fi != NULL && poll_once(FEED_ADSB_FI, fi, &http_status, &err);
+        if (!ok) {
+            ESP_LOGW(TAG, "adsb.fi failed: HTTP %d, %s", http_status, esp_err_to_name(err));
+            /* Fall back to adsb.lol, unless its daily allowance is used up. */
+            if (lol != NULL && esp_timer_get_time() >= lol_rest_until) {
+                int st = 0;
+                esp_err_t e = ESP_OK;
+                ok = poll_once(FEED_ADSB_LOL, lol, &st, &e);
+                if (!ok && st == 429) {
+                    lol_rest_until = esp_timer_get_time() + (int64_t)ADSB_LOL_REST_S * 1000000;
+                }
+            }
+        }
+        if (ok) {
             backoff_s = ADSB_POLL_S;
+            http_status = 200;
+            err = ESP_OK;
         } else {
             /* Back off on any failure: 429 and 5xx especially (PLAN.md §4). */
-            if (http == NULL) {
+            if (fi == NULL) {
                 err = ESP_ERR_NO_MEM;
             }
-            ESP_LOGW(TAG, "poll failed: HTTP %d, %s", http_status, esp_err_to_name(err));
             backoff_s = backoff_s * 2 > ADSB_BACKOFF_MAX_S ? ADSB_BACKOFF_MAX_S : backoff_s * 2;
         }
         set_status(http_status, err, backoff_s, false);

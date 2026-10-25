@@ -135,7 +135,11 @@ static void refresh_feed(void)
         snprintf(line, sizeof(line), "Aircraft: first poll...");
         c = COLOR_WARN;
     } else {
-        snprintf(line, sizeof(line), "Aircraft: adsb.lol, %d received, %ld s ago", m.received, age);
+        snprintf(line, sizeof(line), "Aircraft: %s%s, %d received, %ld s ago", m.source ? m.source : "?",
+                 m.fallback ? " (adsb.fi failed)" : "", m.received, age);
+        if (m.fallback) {
+            c = COLOR_WARN;
+        }
     }
     /* Stale badge: no fresh data for three poll intervals. */
     if (age > 3 * ADSB_POLL_S) {

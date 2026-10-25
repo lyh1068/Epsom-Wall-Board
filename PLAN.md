@@ -94,8 +94,8 @@ All are free. Verify each endpoint against the official docs before coding, beca
 | Weather | **Open-Meteo** `/v1/forecast` with current, hourly temperature, precipitation probability and weather code | None | 15 min |
 | Tube status | **TfL Unified API** `/Line/{ids}/Status`, e.g. `northern,waterloo-city,jubilee,circle` | `app_key` from api-portal.tfl.gov.uk | 2 min |
 | Buses | **TfL Unified API** `/StopPoint/{naptanId}/Arrivals` for `BUS_STOP` in `.env` (default: Epsom High Street stop G, `40004406039A`). Predictions arrive unsorted. | Same `app_key` | 60 s |
-| Aircraft | **adsb.lol** `/v2/point/{lat}/{lon}/{radius_nm}` | None | 10 s |
-| Aircraft fallback | adsb.fi or airplanes.live (same readsb-style JSON); OpenSky `/states/all` with a bounding box needs OAuth2 client credentials, so it's last resort | None / OAuth2 | 10–15 s |
+| Aircraft | **adsb.fi** open data `/api/v3/lat/{lat}/lon/{lon}/dist/{nm}`: 1 request/s, no daily cap; personal non-commercial use, credited on screen. (adsb.lol was the first choice, but its anonymous limit is 500 requests a day, about 83 minutes at a 10 s poll; it is now the fallback.) | None | 10 s |
+| Aircraft fallback | **adsb.lol** `/v2/point/{lat}/{lon}/{radius_nm}` (same readsb JSON), used only when adsb.fi fails, and rested for an hour after a 429. airplanes.live now asks you to email them before it serves you (403 otherwise). OpenSky `/states/all` with a bounding box needs OAuth2 client credentials, so it's last resort. | None / OAuth2 | 10–15 s |
 | Flight route | **adsbdb** `api.adsbdb.com/v0/callsign/{callsign}` → origin and destination plus airline | None | On demand, cached |
 
 Implementation notes:
