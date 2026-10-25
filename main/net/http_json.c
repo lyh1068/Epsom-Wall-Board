@@ -84,19 +84,33 @@ esp_err_t http_json_get(http_json_t *h, const char *url, const char **body, size
     *len = 0;
     *status = 0;
 
-    esp_err_t err = ensure_client(h, url);
-    if (err != ESP_OK) {
-        return err;
-    }
-    h->len = 0;
-    h->overflow = false;
-
-    err = esp_http_client_perform(h->client);
-    if (err != ESP_OK) {
-        /* Start clean next time rather than reusing a broken connection. */
-        ESP_LOGW(TAG, "GET failed: %s", esp_err_to_name(err));
+    /* A kept-alive connection may have been closed by the server while idle
+     * (adsbdb lookups can be minutes apart): the request then fails on write
+     * (ESP_ERR_HTTP_WRITE_DATA). That is not a real failure, so on a reused
+     * connection, reconnect and try once more. */
+    esp_err_t err = ESP_FAIL;
+    for (int attempt = 0; attempt < 2; attempt++) {
+        bool reused = h->client != NULL;
+        err = ensure_client(h, url);
+        if (err != ESP_OK) {
+            return err;
+        }
+        h->len = 0;
+        h->overflow = false;
+        err = esp_http_client_perform(h->client);
+        if (err == ESP_OK) {
+            break;
+        }
+        /* Start clean rather than reusing a broken connection. */
         esp_http_client_cleanup(h->client);
         h->client = NULL;
+        if (!reused) {
+            ESP_LOGW(TAG, "GET failed: %s", esp_err_to_name(err));
+            return err;
+        }
+        ESP_LOGI(TAG, "stale connection (%s), reconnecting", esp_err_to_name(err));
+    }
+    if (err != ESP_OK) {
         return err;
     }
     *status = esp_http_client_get_status_code(h->client);
