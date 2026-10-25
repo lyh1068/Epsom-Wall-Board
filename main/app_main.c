@@ -7,6 +7,7 @@
 #include "data/aircraft.h"
 #include "data/bus.h"
 #include "data/routes.h"
+#include "hw/battery.h"
 #include "data/tube.h"
 #include "data/weather.h"
 #include "esp_event.h"
@@ -51,6 +52,8 @@ void app_main(void)
         ESP_LOGE(TAG, "display did not start");
     }
 
+    /* Charger on: the BSP never drives CHG_EN, so the pack would not charge. */
+    battery_init();
     time_init();
     time_sync_start();
     aircraft_start();

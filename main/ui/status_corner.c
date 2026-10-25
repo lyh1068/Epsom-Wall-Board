@@ -7,6 +7,7 @@
 #include "data/aircraft.h"
 #include "data/routes.h"
 #include "data/bus.h"
+#include "hw/battery.h"
 #include "data/tube.h"
 #include "data/weather.h"
 #include "net/sntp_time.h"
@@ -19,7 +20,7 @@
 #define COLOR_WARN   lv_color_hex(0xFFB74D)
 #define COLOR_BAD    lv_color_hex(0xFF5252)
 
-static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes, *s_weather, *s_tube, *s_bus, *s_sys, *s_crash;
+static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes, *s_weather, *s_tube, *s_bus, *s_batt, *s_sys, *s_crash;
 
 void status_corner_create(lv_obj_t *parent, int32_t width)
 {
@@ -33,6 +34,7 @@ void status_corner_create(lv_obj_t *parent, int32_t width)
     s_weather = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_tube = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_bus = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
+    s_batt = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_sys = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_crash = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_BAD);
     lv_obj_set_hidden(s_crash, true);
@@ -283,6 +285,38 @@ static void refresh_bus(void)
     ui_set_text_color(s_bus, c);
 }
 
+static void refresh_battery(void)
+{
+    battery_t b;
+    battery_read(&b);
+    char line[96];
+    lv_color_t c = COLOR_TEXT;
+    if (!b.monitor_ok) {
+        snprintf(line, sizeof(line), "Battery: monitor not found (%s)", esp_err_to_name(b.err));
+        c = COLOR_BAD;
+    } else if (b.charging) {
+        /* No percentage while charging: the charging voltage inflates it. */
+        snprintf(line, sizeof(line), "Battery: %.2f V  " "\xE2\x80\xA2" "  charging %.2f A  " "\xE2\x80\xA2" "  +%.0f mAh so far",
+                 b.volts, b.amps, b.session_mah);
+        c = COLOR_OK;
+    } else {
+        char level[24];
+        if (b.level_valid) {
+            snprintf(level, sizeof(level), "%d%%", b.level);
+        } else {
+            snprintf(level, sizeof(level), "level in %d s", b.level_in_s);
+        }
+        if (b.amps < -0.05f) {
+            snprintf(line, sizeof(line), "Battery: %.2f V  %s  " "\xE2\x80\xA2" "  on battery, %.2f A", b.volts, level, -b.amps);
+            c = b.level_valid && b.level < 20 ? COLOR_WARN : COLOR_TEXT;
+        } else {
+            snprintf(line, sizeof(line), "Battery: %.2f V  %s  " "\xE2\x80\xA2" "  not charging", b.volts, level);
+        }
+    }
+    ui_set_text(s_batt, line);
+    ui_set_text_color(s_batt, c);
+}
+
 /* Uptime, last restart, and headroom: the numbers that explain a restart. */
 static void refresh_system(void)
 {
@@ -357,5 +391,6 @@ void status_corner_refresh(void)
     refresh_weather();
     refresh_tube();
     refresh_bus();
+    refresh_battery();
     refresh_system();
 }
