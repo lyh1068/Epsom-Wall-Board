@@ -450,7 +450,8 @@ static void tick_cb(lv_timer_t *t)
         return;
     }
     time_t now = time(NULL);
-    if (now / 60 == s_drawn_minute) {
+    /* Every few minutes, not every minute: a full-chart redraw is what tears. */
+    if (s_drawn_minute >= 0 && now / 60 - s_drawn_minute < SKY_REDRAW_MIN) {
         return;
     }
     s_drawn_minute = now / 60;

@@ -75,5 +75,9 @@
 #define BRIGHTNESS_DEFAULT      60
 #define BRIGHTNESS_MIN          5
 
+/* Sky page: redraw the chart this often. Each redraw refreshes the whole
+ * 704 px chart, which tears briefly on this panel; the sky moves ~5 px in 5 min. */
+#define SKY_REDRAW_MIN          5
+
 /* The "overhead now" chip: nearest airborne aircraft within this distance. */
 #define OVERHEAD_NM             5.0
