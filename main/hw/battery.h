@@ -12,7 +12,7 @@
 
 typedef struct {
     bool monitor_ok;        /* INA226 answered */
-    bool charging;          /* CHG_STAT (P6) high */
+    bool charging;          /* current into the pack (measured, not CHG_STAT) */
     float volts;            /* pack voltage (2S Li-ion, ~6.6-8.3 V) */
     float amps;             /* + charging, - discharging */
     int level;              /* 0..100 %, from voltage: approximate */

@@ -306,7 +306,7 @@ static void refresh_battery(void)
         } else {
             snprintf(level, sizeof(level), "level in %d s", b.level_in_s);
         }
-        if (b.amps < -0.05f) {
+        if (b.amps < -0.03f) {
             snprintf(line, sizeof(line), "Battery: %.2f V  %s  " "\xE2\x80\xA2" "  on battery, %.2f A", b.volts, level, -b.amps);
             c = b.level_valid && b.level < 20 ? COLOR_WARN : COLOR_TEXT;
         } else {

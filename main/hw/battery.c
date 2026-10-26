@@ -10,7 +10,7 @@ static const char *TAG = "battery";
 
 /* IO expander 0x44 (BSP expander 1). P0 is WLAN_PWR_EN, already driven by the BSP. */
 #define PIN_CHG_EN       IO_EXPANDER_PIN_NUM_7  /* high: charger on */
-#define PIN_CHG_STAT     IO_EXPANDER_PIN_NUM_6  /* high: charging */
+#define PIN_CHG_STAT     IO_EXPANDER_PIN_NUM_6  /* "high: charging" per M5Unified; not trusted, see battery_read() */
 #define PIN_NCHG_QC_EN   IO_EXPANDER_PIN_NUM_5  /* low: fast (QC) charge on */
 
 /* INA226 on the internal bus, 5 mOhm shunt. */
@@ -25,6 +25,9 @@ static const char *TAG = "battery";
 #define SAMPLE_US        (2 * 1000000)
 /* Off the charger this long before a voltage-based level means anything. */
 #define SETTLE_US        (60 * 1000000LL)
+/* Charging means current into the pack: above ON to start, below OFF to stop. */
+#define CHARGING_ON_A    0.05f
+#define CHARGING_OFF_A   0.02f
 
 static esp_io_expander_handle_t s_ioe;
 static i2c_master_dev_handle_t s_ina;
@@ -103,23 +106,6 @@ void battery_read(battery_t *out)
     int64_t dt_us = s_last_us ? now - s_last_us : 0;
     s_last_us = now;
 
-    if (s_ioe != NULL) {
-        uint32_t levels = 0;
-        if (esp_io_expander_get_level(s_ioe, PIN_CHG_STAT, &levels) == ESP_OK) {
-            bool charging = (levels & PIN_CHG_STAT) != 0;
-            if (charging && !s_last.charging && s_last.level_valid) {
-                /* A new charging session. Brief top-off pauses (well under a
-                 * minute) carry on counting the same session. */
-                s_last.session_mah = 0;
-            }
-            if (!charging && s_last.charging) {
-                s_off_since_us = now;
-            }
-            s_last.charging = charging;
-        }
-    }
-    s_last.level_valid = !s_last.charging && now - s_off_since_us >= SETTLE_US;
-    s_last.level_in_s = s_last.level_valid || s_last.charging ? 0 : (int)((SETTLE_US - (now - s_off_since_us)) / 1000000) + 1;
     if (s_ina != NULL) {
         uint16_t bus, shunt;
         if (ina_read(REG_BUS, &bus) == ESP_OK && ina_read(REG_SHUNT, &shunt) == ESP_OK) {
@@ -127,10 +113,6 @@ void battery_read(battery_t *out)
             s_last.volts = bus * 0.00125f;
             /* The shunt is wired so charging reads negative: invert, so + is charging. */
             s_last.amps = -((int16_t)shunt * 2.5e-6f) / INA226_SHUNT;
-            /* Count the charge going in: current x time since the last sample. */
-            if (s_last.charging && s_last.amps > 0) {
-                s_last.session_mah += s_last.amps * 1000.0f * (float)dt_us / 3.6e9f;
-            }
             /* 2S pack: per-cell 3.30 V empty .. 4.15 V full, as M5Unified. */
             int level = (int)((s_last.volts * 500.0f - 3300.0f) * 100.0f / (4150.0f - 3350.0f));
             s_last.level = level < 0 ? 0 : (level > 100 ? 100 : level);
@@ -138,5 +120,26 @@ void battery_read(battery_t *out)
             s_last.monitor_ok = false;
         }
     }
+
+    /* Charging is what the current says. CHG_STAT (P6) read high even while
+     * the pack was discharging at 0.2 A, so it is not trusted. Hysteresis
+     * keeps noise near zero from flickering the state. */
+    bool charging = s_last.monitor_ok &&
+                    (s_last.charging ? s_last.amps > CHARGING_OFF_A : s_last.amps > CHARGING_ON_A);
+    if (charging && !s_last.charging && s_last.level_valid) {
+        /* A new charging session. Brief top-off pauses (well under a minute)
+         * carry on counting the same session. */
+        s_last.session_mah = 0;
+    }
+    if (!charging && s_last.charging) {
+        s_off_since_us = now;
+    }
+    s_last.charging = charging;
+    /* Count the charge going in: current x time since the last sample. */
+    if (charging) {
+        s_last.session_mah += s_last.amps * 1000.0f * (float)dt_us / 3.6e9f;
+    }
+    s_last.level_valid = !charging && now - s_off_since_us >= SETTLE_US;
+    s_last.level_in_s = s_last.level_valid || charging ? 0 : (int)((SETTLE_US - (now - s_off_since_us)) / 1000000) + 1;
     *out = s_last;
 }
