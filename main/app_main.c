@@ -15,6 +15,7 @@
 #include "esp_netif.h"
 #include "hal/axi_icm_ll.h"
 #include "lvgl.h"
+#include "mbedtls/aes.h"
 #include "net/sntp_time.h"
 #include "net/wifi.h"
 #include "sys/health.h"
@@ -68,6 +69,13 @@ void app_main(void)
         axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, DMA2D_QOS_BURST, ch);
         axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D, DMA2D_QOS_PEAK_LEVEL, DMA2D_QOS_RATE_LEVEL, ch);
     }
+
+    /* Claim the AES interrupt now, once. mbedTLS does it lazily on the first TLS
+     * connection, unlocked: two pollers connecting at once both try, and the
+     * loser aborts (core dump: tube task in esp_aes_intr_alloc). */
+    mbedtls_aes_context aes;
+    mbedtls_aes_init(&aes);
+    mbedtls_aes_free(&aes);
 
     /* Charger on: the BSP never drives CHG_EN, so the pack would not charge. */
     battery_init();
