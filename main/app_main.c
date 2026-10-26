@@ -17,6 +17,7 @@
 #include "net/sntp_time.h"
 #include "net/wifi.h"
 #include "sys/health.h"
+#include "sys/settings.h"
 #include "ui/ui_root.h"
 
 static const char *TAG = "main";
@@ -25,6 +26,7 @@ void app_main(void)
 {
     /* Why did we restart? Read before anything else can crash again. */
     health_init();
+    settings_init();
 
     /* Then, before the display: esp_hosted is already probing for the C6. */
     wifi_power_on();
@@ -67,5 +69,6 @@ void app_main(void)
     bsp_display_rotate(disp, UI_ROTATION);
     ui_root_create(lv_screen_active());
     bsp_display_unlock();
-    bsp_display_backlight_on();
+    /* The saved brightness (swipe down to change), not the BSP's 100%. */
+    settings_set_brightness(settings_brightness());
 }

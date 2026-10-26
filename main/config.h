@@ -70,5 +70,10 @@
  * by day and in twilight the ones too faint to see are drawn outlined. */
 #define SKY_CHART_MAG           3.0f
 
+/* Backlight, percent: the default until changed by swiping down, and the floor
+ * (below this the panel is too dim to find the control again). */
+#define BRIGHTNESS_DEFAULT      60
+#define BRIGHTNESS_MIN          5
+
 /* The "overhead now" chip: nearest airborne aircraft within this distance. */
 #define OVERHEAD_NM             5.0

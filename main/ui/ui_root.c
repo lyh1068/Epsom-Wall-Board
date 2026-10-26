@@ -2,6 +2,7 @@
 
 #include "bsp/esp-bsp.h"
 #include "ui/bus_page.h"
+#include "ui/controls.h"
 #include "ui/morning.h"
 #include "ui/radar.h"
 #include "ui/sky_page.h"
@@ -48,6 +49,14 @@ static void on_gesture(lv_event_t *e)
 {
     lv_indev_t *indev = lv_event_get_target(e);
     lv_event_code_t code = lv_event_get_code(e);
+    if (controls_is_open()) {
+        return;     /* dragging the brightness slider must not flip the page */
+    }
+    if (code == LV_EVENT_GESTURE_DOWN) {
+        controls_open();
+        lv_indev_wait_release(indev);
+        return;
+    }
     if (code == LV_EVENT_GESTURE_LEFT) {
         show_page(s_current + 1);
     } else if (code == LV_EVENT_GESTURE_RIGHT) {
@@ -94,6 +103,7 @@ void ui_root_create(lv_obj_t *screen)
     if (touch) {
         lv_indev_add_event_cb(touch, on_gesture, LV_EVENT_GESTURE_LEFT, NULL);
         lv_indev_add_event_cb(touch, on_gesture, LV_EVENT_GESTURE_RIGHT, NULL);
+        lv_indev_add_event_cb(touch, on_gesture, LV_EVENT_GESTURE_DOWN, NULL);
     }
 }
 
