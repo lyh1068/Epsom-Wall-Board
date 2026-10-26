@@ -20,7 +20,7 @@
 #define COLOR_WARN   lv_color_hex(0xFFB74D)
 #define COLOR_BAD    lv_color_hex(0xFF5252)
 
-static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes, *s_weather, *s_tube, *s_bus, *s_batt, *s_sys, *s_crash;
+static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes, *s_weather, *s_tube, *s_bus, *s_batt, *s_sys, *s_disp, *s_crash;
 
 void status_corner_create(lv_obj_t *parent, int32_t width)
 {
@@ -36,6 +36,7 @@ void status_corner_create(lv_obj_t *parent, int32_t width)
     s_bus = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_batt = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_sys = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
+    s_disp = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_crash = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_BAD);
     lv_obj_set_hidden(s_crash, true);
     status_corner_refresh();
@@ -330,6 +331,20 @@ static void refresh_system(void)
              (unsigned)(health_internal_min_free() / 1024), (unsigned long)health_lvgl_stack_free());
     ui_set_text(s_sys, line);
     ui_set_text_color(s_sys, hb->crashed ? COLOR_BAD : COLOR_TEXT);
+
+    uint32_t ago;
+    uint32_t stalls = health_display_underruns(&ago);
+    if (stalls == 0) {
+        snprintf(line, sizeof(line), "Display: no stalls (blue frames) since boot");
+    } else if (ago < 3600) {
+        snprintf(line, sizeof(line), "Display: %lu stall(s) (blue frames) since boot, last %lu min ago",
+                 (unsigned long)stalls, (unsigned long)(ago / 60));
+    } else {
+        snprintf(line, sizeof(line), "Display: %lu stall(s) (blue frames) since boot, last %luh%02lum ago",
+                 (unsigned long)stalls, (unsigned long)(ago / 3600), (unsigned long)(ago / 60 % 60));
+    }
+    ui_set_text(s_disp, line);
+    ui_set_text_color(s_disp, stalls ? COLOR_WARN : COLOR_TEXT);
 
     if (hb->dump) {
         snprintf(line, sizeof(line), "Crash dump: task %s at 0x%08lx%s  " "\xE2\x80\xA2" "  %lu crash(es) since power-on",

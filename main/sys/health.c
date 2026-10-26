@@ -6,6 +6,7 @@
 #include "esp_core_dump.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_rom_sys.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -21,6 +22,30 @@ static __NOINIT_ATTR uint32_t s_crashes;
 
 static health_boot_t s_boot;
 static uint32_t s_lvgl_free = UINT32_MAX;
+
+/*
+ * Display underruns (the blue frame). The DPI driver reports one only by a ROM
+ * printf from its interrupt handler, and ROM printf also writes to a second
+ * output channel, unused on this board: watch that for the word. IRAM and DRAM
+ * only, as it runs inside the ISR.
+ */
+static const DRAM_ATTR char UNDERRUN[] = "underrun";
+static DRAM_ATTR int s_match;
+static volatile DRAM_ATTR uint32_t s_underruns;
+static volatile DRAM_ATTR int64_t s_underrun_at_us;
+
+static void IRAM_ATTR rom_putc_watch(char c)
+{
+    if (c == UNDERRUN[s_match]) {
+        if (UNDERRUN[++s_match] == '\0') {
+            s_underrun_at_us = esp_timer_get_time();
+            s_underruns++;
+            s_match = 0;
+        }
+    } else {
+        s_match = c == UNDERRUN[0];
+    }
+}
 
 static const char *reason_str(esp_reset_reason_t r, bool *crashed)
 {
@@ -72,6 +97,7 @@ void health_init(void)
         ESP_LOGW(TAG, "core dump: task %s, PC 0x%08lx%s", s_boot.dump_task, (unsigned long)s_boot.dump_pc,
                  s_boot.dump_this_fw ? "" : " (older firmware)");
     }
+    esp_rom_install_channel_putc(2, rom_putc_watch);
     ESP_LOGI(TAG, "reset: %s, boot %lu, crashes %lu", s_boot.reason, (unsigned long)s_boots, (unsigned long)s_crashes);
 }
 
@@ -107,4 +133,13 @@ size_t health_internal_min_free(void)
 uint32_t health_uptime_s(void)
 {
     return (uint32_t)(esp_timer_get_time() / 1000000);
+}
+
+uint32_t health_display_underruns(uint32_t *ago_s)
+{
+    uint32_t n = s_underruns;
+    if (ago_s != NULL) {
+        *ago_s = n ? (uint32_t)((esp_timer_get_time() - s_underrun_at_us) / 1000000) : 0;
+    }
+    return n;
 }

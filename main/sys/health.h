@@ -34,3 +34,7 @@ uint32_t health_lvgl_stack_free(void);      /* bytes, lowest seen */
 size_t health_internal_free(void);          /* bytes, now */
 size_t health_internal_min_free(void);      /* bytes, lowest since boot */
 uint32_t health_uptime_s(void);
+
+/* Display underruns since boot: the panel could not read the framebuffer from
+ * PSRAM in time, which shows as a blue frame. *ago_s: seconds since the last. */
+uint32_t health_display_underruns(uint32_t *ago_s);
