@@ -39,6 +39,7 @@ static const char *TAG = "bus_page";
 #define C_TEXT      lv_color_hex(0xECEFF1)
 #define C_DIM       lv_color_hex(0x90A4AE)
 #define C_AMBER     lv_color_hex(0xFFB000)
+#define C_LATE      lv_color_hex(0xFF7043)
 #define C_CARD      lv_color_hex(0x10171C)
 #define C_LETTER    lv_color_hex(0xC62828)
 
@@ -202,54 +203,94 @@ static void build_map(lv_obj_t *page)
 
 /* ---- the cards ---------------------------------------------------------------------- */
 
-static void set_row(card_t *c, int r, const char *line, const char *dest, const char *wait)
+static void set_row(card_t *c, int r, const char *line, const char *dest, const char *wait, lv_color_t wc)
 {
     ui_set_text(c->line[r], line);
     ui_set_text(c->dest[r], dest);
     ui_set_text(c->wait[r], wait);
+    ui_set_text_color(c->wait[r], wc);
+}
+
+/* Not set off yet: listed at the stop where its trip begins (that stop's own
+ * board says so), or still listed there for this trip. */
+static bool not_left(const bus_arrival_t *a, const bus_board_t *boards, const bool *fresh)
+{
+    if (a->not_left) {
+        return true;
+    }
+    for (int j = 0; j < BUS_STOP_COUNT; j++) {
+        if (fresh[j] && bus_still_waiting(&boards[j], a)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 static void refresh_cb(lv_timer_t *t)
 {
-    static EXT_RAM_BSS_ATTR bus_board_t b;   /* off the LVGL stack, and out of internal RAM */
+    /* Every stop's board first: a bus at one stop may still be waiting at another. */
+    static EXT_RAM_BSS_ATTR bus_board_t boards[BUS_MAX_STOPS];   /* out of internal RAM */
+    bus_stop_meta_t sm[BUS_MAX_STOPS];
+    bool have[BUS_MAX_STOPS], fresh[BUS_MAX_STOPS];
+    int elapsed[BUS_MAX_STOPS];
     const int64_t now = esp_timer_get_time();
+    for (int i = 0; i < BUS_STOP_COUNT; i++) {
+        have[i] = bus_get_stop(i, &boards[i], &sm[i]);
+        if (!have[i]) {
+            boards[i].count = boards[i].nwaiting = 0;
+        }
+        elapsed[i] = have[i] ? (int)((now - sm[i].fetched_us) / 1000000) : 0;
+        /* A start stop's list is trusted for two polls; older, it says nothing. */
+        fresh[i] = have[i] && BUS_STOPS[i].starts[0] && now - sm[i].fetched_us < 2LL * BUS_POLL_S * 1000000;
+    }
 
     for (int i = 0; i < BUS_STOP_COUNT; i++) {
         card_t *c = &s_cards[i];
-        bus_stop_meta_t sm;
+        const bus_board_t *b = &boards[i];
         int r = 0;
-        if (!bus_get_stop(i, &b, &sm)) {
-            set_row(c, r++, "", "waiting...", "");
+        if (!have[i]) {
+            set_row(c, r++, "", "waiting...", "", C_AMBER);
         } else {
-            /* Count down locally between this stop's polls. */
-            int elapsed = (int)((now - sm.fetched_us) / 1000000);
-            for (int k = 0; k < b.count && r < BUS_PER_STOP; k++) {
-                int secs = b.a[k].secs - elapsed;
+            for (int k = 0; k < b->count && r < BUS_PER_STOP; k++) {
+                /* Count down locally between this stop's polls. */
+                int secs = b->a[k].secs - elapsed[i];
                 if (secs < -60) {
                     continue;   /* gone; the next poll drops it */
                 }
-                char wait[12];
-                bus_fmt_wait(wait, sizeof(wait), secs);
-                set_row(c, r++, b.a[k].line, b.a[k].dest, wait);
+                char wait[16];
+                lv_color_t wc = C_AMBER;
+                if (not_left(&b->a[k], boards, fresh)) {
+                    /* "~": TfL's timetable, as the bus has not set off; it may
+                     * not come. Red when the bus is still on its way into
+                     * Epsom and cannot make that time: then its earliest. */
+                    int late = bus_late_secs(&b->a[k], secs, boards, elapsed, BUS_STOP_COUNT, BUS_TURN_MIN_S);
+                    wc = late >= 0 ? C_LATE : C_DIM;
+                    wait[0] = '~';
+                    bus_fmt_wait(wait + 1, sizeof(wait) - 1, late >= 0 ? late : secs);
+                } else {
+                    bus_fmt_wait(wait, sizeof(wait), secs);
+                }
+                set_row(c, r++, b->a[k].line, b->a[k].dest, wait, wc);
             }
             if (r == 0) {
-                set_row(c, r++, "", "No buses due", "");
+                set_row(c, r++, "", "No buses due", "", C_AMBER);
             }
         }
         for (; r < BUS_PER_STOP; r++) {
-            set_row(c, r, "", "", "");
+            set_row(c, r, "", "", "", C_AMBER);
         }
     }
 
     bus_meta_t m;
     bus_get_meta(&m);
-    char note[96];
+    char note[160];
     if (m.waiting_for_wifi) {
         snprintf(note, sizeof(note), "Waiting for Wi-Fi");
     } else if (m.oldest_s < 0) {
         snprintf(note, sizeof(note), "Loading stops...");
     } else {
-        snprintf(note, sizeof(note), "TfL routes only  " "\xE2\x80\xA2" "  each stop updated every %d s", BUS_POLL_S);
+        snprintf(note, sizeof(note), "TfL routes only  " "\xE2\x80\xA2" "  each stop updated every %d s\n"
+                 "~ not yet set off (timetable)  " "\xE2\x80\xA2" "  red ~ still coming into Epsom: earliest", BUS_POLL_S);
     }
     ui_set_text(s_note, note);
 }
@@ -262,7 +303,7 @@ void bus_page_create(lv_obj_t *page)
 
     lv_obj_t *title = label(page, &lv_font_montserrat_28, C_AMBER, PAD + 4, 14, 640);
     lv_label_set_text(title, "Buses within 300 m of Epsom station");
-    s_note = label(page, &lv_font_montserrat_14, C_DIM, 700, 24, 1280 - 700 - PAD - 4);
+    s_note = label(page, &lv_font_montserrat_14, C_DIM, 700, 10, 1280 - 700 - PAD - 4);   /* two lines */
     lv_obj_set_style_text_align(s_note, LV_TEXT_ALIGN_RIGHT, 0);
 
     build_map(page);
@@ -293,8 +334,8 @@ void bus_page_create(lv_obj_t *page)
         for (int r = 0; r < BUS_PER_STOP; r++) {
             int32_t y = 50 + r * ROW_H;
             c->line[r] = label(card, &lv_font_montserrat_20, C_TEXT, 10, y, 48);
-            c->dest[r] = label(card, &lv_font_montserrat_20, C_TEXT, 60, y, CARD_W - 60 - 76);
-            c->wait[r] = label(card, &lv_font_montserrat_20, C_AMBER, CARD_W - 76, y, 66);
+            c->dest[r] = label(card, &lv_font_montserrat_20, C_TEXT, 60, y, CARD_W - 60 - 90);
+            c->wait[r] = label(card, &lv_font_montserrat_20, C_AMBER, CARD_W - 90, y, 80);
             lv_obj_set_style_text_align(c->wait[r], LV_TEXT_ALIGN_RIGHT, 0);
         }
     }

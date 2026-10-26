@@ -11,19 +11,20 @@ typedef struct {
     const char *name;
     const char *letter;     /* the letter on the stop flag */
     const char *routes;     /* TfL routes calling there */
+    const char *starts;     /* routes whose trips begin here: their times are the timetable's until the bus leaves */
     int distance_m;         /* from the station */
     float lat, lon;         /* for the map */
 } bus_stop_t;
 
 static const bus_stop_t BUS_STOPS[] = {
-    { "40004406038B", "Clock Tower", "B", "166", 83, 51.333261f, -0.268835f },
-    { "40004406038A", "Epsom Clock Tower", "A", "293 406 418 S2", 91, 51.333272f, -0.268404f },
-    { "40004406067A", "Waterloo Road", "L", "418", 118, 51.334876f, -0.268042f },
-    { "40004406067B", "Epsom Station", "F", "418 467", 126, 51.333857f, -0.267204f },
-    { "40004406039D", "Epsom High Street", "K", "166 293 467", 205, 51.333535f, -0.266140f },
-    { "40004406119A", "Ashley Road", "M", "166 293", 245, 51.332303f, -0.266746f },
-    { "40004406039A", "Epsom High Street", "G", "166 293 406 467 S2", 254, 51.333991f, -0.265347f },
-    { "40004406039C", "Epsom High Street", "J", "406 S2", 262, 51.333774f, -0.265255f },
+    { "40004406038B", "Clock Tower", "B", "166", "", 83, 51.333261f, -0.268835f },
+    { "40004406038A", "Epsom Clock Tower", "A", "293 406 418 S2", "418 S2", 91, 51.333272f, -0.268404f },
+    { "40004406067A", "Waterloo Road", "L", "418", "", 118, 51.334876f, -0.268042f },
+    { "40004406067B", "Epsom Station", "F", "418 467", "", 126, 51.333857f, -0.267204f },
+    { "40004406039D", "Epsom High Street", "K", "166 293 467", "", 205, 51.333535f, -0.266140f },
+    { "40004406119A", "Ashley Road", "M", "166 293", "", 245, 51.332303f, -0.266746f },
+    { "40004406039A", "Epsom High Street", "G", "166 293 406 467 S2", "", 254, 51.333991f, -0.265347f },
+    { "40004406039C", "Epsom High Street", "J", "406 S2", "", 262, 51.333774f, -0.265255f },
 };
 
 #define BUS_STOP_COUNT ((int)(sizeof(BUS_STOPS) / sizeof(BUS_STOPS[0])))

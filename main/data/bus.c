@@ -81,7 +81,7 @@ static bool poll_stop(http_json_t *http, int i, bus_board_t *scratch, int *statu
     if (*err != ESP_OK || *status != 200) {
         return false;
     }
-    if (!bus_parse(body, len, scratch)) {
+    if (!bus_parse(body, len, BUS_STOPS[i].starts, scratch)) {
         *err = ESP_ERR_INVALID_RESPONSE;
         return false;
     }

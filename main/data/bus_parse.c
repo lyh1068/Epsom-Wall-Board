@@ -21,7 +21,65 @@ static int by_secs(const void *a, const void *b)
     return ((const bus_arrival_t *)a)->secs - ((const bus_arrival_t *)b)->secs;
 }
 
-bool bus_parse(const char *json, size_t len, bus_board_t *out)
+/* "418" in "418 S2"? */
+static bool word_in(const char *word, const char *list)
+{
+    size_t n = strlen(word);
+    for (const char *p = list; n && (p = strstr(p, word)) != NULL; p += n) {
+        if ((p == list || p[-1] == ' ') && (p[n] == ' ' || p[n] == '\0')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool bus_still_waiting(const bus_board_t *start, const bus_arrival_t *a)
+{
+    for (int i = 0; i < start->nwaiting; i++) {
+        const bus_arrival_t *w = &start->waiting[i];
+        if (w->outbound == a->outbound && a->vehicle[0] && strcmp(w->vehicle, a->vehicle) == 0
+            && strcmp(w->line, a->line) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool same_bus(const bus_arrival_t *x, const bus_arrival_t *y)
+{
+    return x->vehicle[0] && strcmp(x->vehicle, y->vehicle) == 0 && strcmp(x->line, y->line) == 0;
+}
+
+int bus_late_secs(const bus_arrival_t *a, int a_secs, const bus_board_t *boards, const int *elapsed, int n,
+                  int turn_s)
+{
+    /* Where the previous trip ends: the latest of its stops on our boards. */
+    bool inbound = false;
+    int end = 0, start = a_secs;
+    for (int j = 0; j < n; j++) {
+        for (int k = 0; k < boards[j].count; k++) {
+            const bus_arrival_t *p = &boards[j].a[k];
+            if (same_bus(p, a) && p->outbound != a->outbound) {
+                int t = p->secs - elapsed[j];
+                end = inbound && end > t ? end : t;
+                inbound = true;
+            }
+        }
+        for (int k = 0; k < boards[j].nwaiting; k++) {
+            const bus_arrival_t *w = &boards[j].waiting[k];
+            if (same_bus(w, a) && w->outbound == a->outbound && w->secs - elapsed[j] < start) {
+                start = w->secs - elapsed[j];
+            }
+        }
+    }
+    if (!inbound) {
+        return -1;
+    }
+    int earliest = (end > 0 ? end : 0) + turn_s + (a_secs - start);
+    return earliest > a_secs ? earliest : -1;
+}
+
+bool bus_parse(const char *json, size_t len, const char *starts, bus_board_t *out)
 {
     memset(out, 0, sizeof(*out));
     cJSON *root = cJSON_ParseWithLength(json, len);
@@ -44,7 +102,16 @@ bool bus_parse(const char *json, size_t len, bus_board_t *out)
         bus_arrival_t *a = &all[m++];
         get_str(a->line, sizeof(a->line), p, "lineName");
         get_str(a->dest, sizeof(a->dest), p, "destinationName");
+        get_str(a->vehicle, sizeof(a->vehicle), p, "vehicleId");
+        char dir[12];
+        get_str(dir, sizeof(dir), p, "direction");
+        a->outbound = strcmp(dir, "outbound") == 0;
         a->secs = (int)t->valuedouble;
+        /* A trip that begins here has not left while it is listed here. */
+        a->not_left = starts != NULL && word_in(a->line, starts);
+        if (a->not_left && out->nwaiting < BUS_MAX_WAITING) {
+            out->waiting[out->nwaiting++] = *a;
+        }
         if (out->stop_name[0] == '\0') {
             get_str(out->stop_name, sizeof(out->stop_name), p, "stationName");
             get_str(out->stop_letter, sizeof(out->stop_letter), p, "platformName");

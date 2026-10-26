@@ -10,18 +10,41 @@ board does not search for stops at boot:
 
 Stops TfL lists with no lines are Surrey County Council-only stops, which have
 no TfL arrivals, so they are left out.
+
+It also asks TfL for each route's stop sequence (keyless, one request per
+route and direction) to find the stops where a route's trips begin. Times for
+a trip that has not set off yet are TfL's timetable, not a tracked bus: a trip
+that never runs counts down to "due" and vanishes. The board marks them.
 """
 
 import argparse
 import json
 import pathlib
 import sys
+import urllib.request
 
 MAX_STOPS = 8   # BUS_MAX_STOPS in bus_stops.h; the bus page is a 2x4 grid
 
 
 def c_str(s):
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def trip_starts(routes):
+    """{naptanId: [route, ...]} for stops that are the first of a route's sequence."""
+    starts = {}
+    for route in sorted(routes):
+        for direction in ("inbound", "outbound"):
+            url = "https://api.tfl.gov.uk/Line/%s/Route/Sequence/%s" % (route, direction)
+            # TfL refuses urllib's default User-Agent.
+            req = urllib.request.Request(url, headers={"User-Agent": "EpsomWallBoard-tools/0.1"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                seq = json.load(r)
+            for branch in seq.get("stopPointSequences", []):
+                first = branch["stopPoint"][0]["id"]
+                if route not in starts.setdefault(first, []):
+                    starts[first].append(route)
+    return starts
 
 
 def main():
@@ -50,17 +73,20 @@ def main():
         "    const char *name;",
         "    const char *letter;     /* the letter on the stop flag */",
         "    const char *routes;     /* TfL routes calling there */",
+        "    const char *starts;     /* routes whose trips begin here: their times are the timetable's until the bus leaves */",
         "    int distance_m;         /* from the station */",
         "    float lat, lon;         /* for the map */",
         "} bus_stop_t;",
         "",
         "static const bus_stop_t BUS_STOPS[] = {",
     ]
+    starts = trip_starts({l["name"] for s in stops for l in s["lines"]})
     for s in stops:
         letter = s.get("stopLetter") or s.get("indicator", "").replace("Stop ", "")
         routes = " ".join(l["name"] for l in s["lines"])
-        lines.append("    { %s, %s, %s, %s, %d, %.6ff, %.6ff }," % (c_str(s["naptanId"]), c_str(s["commonName"]),
-                     c_str(letter), c_str(routes), round(s["distance"]), s["lat"], s["lon"]))
+        here = [r for r in routes.split() if r in starts.get(s["naptanId"], [])]
+        lines.append("    { %s, %s, %s, %s, %s, %d, %.6ff, %.6ff }," % (c_str(s["naptanId"]), c_str(s["commonName"]),
+                     c_str(letter), c_str(routes), c_str(" ".join(here)), round(s["distance"]), s["lat"], s["lon"]))
     lines += [
         "};",
         "",

@@ -569,7 +569,7 @@ static void test_bus(const char *dir)
 
     /* Epsom High Street (G), Saturday morning: 5 predictions, unsorted. */
     bus_board_t b;
-    CHECK(bus_parse(json, len, &b));
+    CHECK(bus_parse(json, len, "", &b));
     free(json);
     CHECK(b.count == 5);
     CHECK(strcmp(b.stop_name, "Epsom High Street") == 0 && strcmp(b.stop_letter, "G") == 0);
@@ -589,18 +589,75 @@ static void test_bus(const char *dir)
         strcat(big, one);
     }
     strcat(big, "]");
-    CHECK(bus_parse(big, strlen(big), &b));
+    CHECK(bus_parse(big, strlen(big), "", &b));
     CHECK(b.count == BUS_MAX);
     CHECK(b.a[0].secs == 1000 - (BUS_MAX + 3) * 60);    /* the last one in the array */
 
     /* Nothing due (late night): valid, empty, no stop name. */
-    CHECK(bus_parse("[]", 2, &b));
+    CHECK(bus_parse("[]", 2, "", &b));
     CHECK(b.count == 0 && b.stop_name[0] == '\0');
 
     /* TfL error object, garbage. */
     const char *err = "{\"$type\":\"Tfl.Apps.Api.Models.ApiError\",\"httpStatusCode\":404}";
-    CHECK(!bus_parse(err, strlen(err), &b));
-    CHECK(!bus_parse("x", 1, &b));
+    CHECK(!bus_parse(err, strlen(err), "", &b));
+    CHECK(!bus_parse("x", 1, "", &b));
+
+    /* Fixture fields the not-yet-left rule needs: vehicle and direction. */
+    json = read_file(path, &len);
+    CHECK(json != NULL && bus_parse(json, len, "", &b));
+    free(json);
+    CHECK(strcmp(b.a[2].vehicle, "SK68LXU") == 0 && !b.a[2].outbound && !b.a[2].not_left);
+
+    /* Kingston-bound 418s begin at Clock Tower (A), then Waterloo Road (L).
+     * EVN is still at A, so its time at L is the timetable's too; AAA has
+     * left A, so it is tracked at L. EVN coming INTO Epsom at F on its
+     * previous trip (outbound) is a tracked bus, not the waiting one. */
+    static bus_board_t at_a, at_l, at_f;
+    const char *a_json =
+        "[{\"lineName\":\"418\",\"destinationName\":\"Kingston\",\"vehicleId\":\"LJ16EVN\",\"direction\":\"inbound\",\"timeToStation\":780},"
+        " {\"lineName\":\"S2\",\"destinationName\":\"St Helier Station\",\"vehicleId\":\"YX1\",\"direction\":\"outbound\",\"timeToStation\":300},"
+        " {\"lineName\":\"293\",\"destinationName\":\"Morden\",\"vehicleId\":\"YX2\",\"direction\":\"inbound\",\"timeToStation\":100},"
+        " {\"lineName\":\"S20\",\"destinationName\":\"X\",\"vehicleId\":\"YX3\",\"direction\":\"inbound\",\"timeToStation\":200}]";
+    CHECK(bus_parse(a_json, strlen(a_json), "418 S2", &at_a));
+    CHECK(at_a.count == 4 && at_a.nwaiting == 2);
+    CHECK(strcmp(at_a.a[0].line, "293") == 0 && !at_a.a[0].not_left);
+    CHECK(strcmp(at_a.a[1].line, "S20") == 0 && !at_a.a[1].not_left);      /* not "S2" */
+    CHECK(strcmp(at_a.a[2].line, "S2") == 0 && at_a.a[2].not_left && at_a.a[2].outbound);
+    CHECK(strcmp(at_a.a[3].line, "418") == 0 && at_a.a[3].not_left);
+    const char *l_json =
+        "[{\"lineName\":\"418\",\"destinationName\":\"Kingston\",\"vehicleId\":\"LJ16EVN\",\"direction\":\"inbound\",\"timeToStation\":900},"
+        " {\"lineName\":\"418\",\"destinationName\":\"Kingston\",\"vehicleId\":\"LJ16AAA\",\"direction\":\"inbound\",\"timeToStation\":60}]";
+    CHECK(bus_parse(l_json, strlen(l_json), "", &at_l));
+    CHECK(!at_l.a[0].not_left && !at_l.a[1].not_left);
+    CHECK(!bus_still_waiting(&at_a, &at_l.a[0]));                           /* AAA: left */
+    CHECK(bus_still_waiting(&at_a, &at_l.a[1]));                            /* EVN: waiting */
+    const char *f_json =
+        "[{\"lineName\":\"418\",\"destinationName\":\"Epsom\",\"vehicleId\":\"LJ16EVN\",\"direction\":\"outbound\",\"timeToStation\":120}]";
+    CHECK(bus_parse(f_json, strlen(f_json), "", &at_f));
+    CHECK(!bus_still_waiting(&at_a, &at_f.a[0]));
+    /* EVN is due into Epsom (F) in 2 min on its previous trip, and TfL has
+     * it leaving A in 13 min, L in 15: possible, so no late estimate. */
+    const bus_board_t three[] = { at_a, at_l, at_f };
+    const int fresh_now[] = { 0, 0, 0 };
+    CHECK(bus_late_secs(&at_a.a[3], 780, three, fresh_now, 3, 120) == -1);
+    CHECK(bus_late_secs(&at_l.a[1], 900, three, fresh_now, 3, 120) == -1);
+    /* Now TfL still says A in 13 min but EVN is 20 min from Epsom: it can
+     * leave A no sooner than 20 + 2 min, so L at 22 + 2 (TfL's A->L gap). */
+    at_f.a[0].secs = 1200;
+    const bus_board_t late[] = { at_a, at_l, at_f };
+    CHECK(bus_late_secs(&at_a.a[3], 780, late, fresh_now, 3, 120) == 1320);
+    CHECK(bus_late_secs(&at_l.a[1], 900, late, fresh_now, 3, 120) == 1440);
+    /* Boards fetched at different times are counted down to now first:
+     * F fetched 300 s ago puts EVN 15 min out, A leaving at 17. */
+    const int ages[] = { 0, 0, 300 };
+    CHECK(bus_late_secs(&at_a.a[3], 780, late, ages, 3, 120) == 1020);
+    /* AAA (left A already) is not seen inbound: nothing to say. */
+    CHECK(bus_late_secs(&at_l.a[0], 60, late, fresh_now, 3, 120) == -1);
+
+    /* No vehicle id: never matched. */
+    bus_arrival_t anon = at_l.a[1];
+    anon.vehicle[0] = '\0';
+    CHECK(!bus_still_waiting(&at_a, &anon));
 
     char w[16];
     bus_fmt_wait(w, sizeof(w), 59);
