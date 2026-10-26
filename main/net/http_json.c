@@ -16,6 +16,7 @@ struct http_json {
     char *buf;
     size_t len, cap, max;
     bool overflow;
+    const char *hdr_name, *hdr_value;
 };
 
 static esp_err_t on_event(esp_http_client_event_t *e)
@@ -59,6 +60,12 @@ http_json_t *http_json_new(size_t max_body)
     return h;
 }
 
+void http_json_set_header(http_json_t *h, const char *name, const char *value)
+{
+    h->hdr_name = name;
+    h->hdr_value = value;
+}
+
 static esp_err_t ensure_client(http_json_t *h, const char *url)
 {
     if (h->client != NULL) {
@@ -75,7 +82,11 @@ static esp_err_t ensure_client(http_json_t *h, const char *url)
         .buffer_size = 4096,
     };
     h->client = esp_http_client_init(&cfg);
-    return h->client ? ESP_OK : ESP_ERR_NO_MEM;
+    if (h->client == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    /* Kept by the client across requests, so set once per connection. */
+    return h->hdr_name ? esp_http_client_set_header(h->client, h->hdr_name, h->hdr_value) : ESP_OK;
 }
 
 esp_err_t http_json_get(http_json_t *h, const char *url, const char **body, size_t *len, int *status)

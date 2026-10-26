@@ -13,6 +13,10 @@ typedef struct http_json http_json_t;
 
 http_json_t *http_json_new(size_t max_body);
 
+/* Send this header with every request (one only, e.g. an API key). Both
+ * strings must outlive h: string literals or the generated secrets. */
+void http_json_set_header(http_json_t *h, const char *name, const char *value);
+
 /*
  * GET url. On ESP_OK, *body points to a NUL-terminated buffer owned by h
  * (valid until the next call) and *status holds the HTTP status, which may

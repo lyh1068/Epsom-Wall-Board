@@ -7,6 +7,7 @@
 #include "data/aircraft.h"
 #include "data/bus.h"
 #include "data/routes.h"
+#include "data/trains.h"
 #include "hw/battery.h"
 #include "data/tube.h"
 #include "data/weather.h"
@@ -84,6 +85,7 @@ void app_main(void)
     aircraft_start();
     routes_start();
     weather_start();
+    trains_start();
     tube_start();
     bus_start();
 

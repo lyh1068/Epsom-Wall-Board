@@ -7,6 +7,7 @@
 #include "data/aircraft.h"
 #include "data/routes.h"
 #include "data/bus.h"
+#include "data/trains.h"
 #include "hw/battery.h"
 #include "data/tube.h"
 #include "data/weather.h"
@@ -20,7 +21,7 @@
 #define COLOR_WARN   lv_color_hex(0xFFB74D)
 #define COLOR_BAD    lv_color_hex(0xFF5252)
 
-static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes, *s_weather, *s_tube, *s_bus, *s_batt, *s_sys, *s_disp, *s_crash;
+static lv_obj_t *s_clock, *s_wifi, *s_time, *s_feed, *s_routes, *s_weather, *s_trains, *s_tube, *s_bus, *s_batt, *s_sys, *s_disp, *s_crash;
 
 void status_corner_create(lv_obj_t *parent, int32_t width)
 {
@@ -32,6 +33,7 @@ void status_corner_create(lv_obj_t *parent, int32_t width)
     s_feed = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_routes = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_weather = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
+    s_trains = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_tube = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_bus = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
     s_batt = ui_fixed_label(parent, &lv_font_montserrat_14, width, COLOR_TEXT);
@@ -212,6 +214,45 @@ static void refresh_weather(void)
     ui_set_text_color(s_weather, c);
 }
 
+static bool trains_bad(const trains_meta_t *m, time_t now)
+{
+    return !m->no_key && (m->last_err != ESP_OK || (m->http_status && m->http_status != 200)
+                          || (m->last_ok && now - m->last_ok > 3 * TRAINS_POLL_S));
+}
+
+static void refresh_trains(void)
+{
+    trains_meta_t m;
+    trains_get(NULL, &m);
+    char line[96];
+    lv_color_t c = COLOR_TEXT;
+    long age = m.last_ok ? (long)(time(NULL) - m.last_ok) : -1;
+    if (m.no_key) {
+        snprintf(line, sizeof(line), "Trains: no RAIL_DATA_KEY in .env");
+        c = COLOR_WARN;
+    } else if (m.http_status == 401 || m.http_status == 403) {
+        snprintf(line, sizeof(line), "Trains: Rail Data rejected the key (HTTP %d) - check RAIL_DATA_KEY", m.http_status);
+        c = COLOR_BAD;
+    } else if (m.last_err != ESP_OK || (m.http_status != 0 && m.http_status != 200)) {
+        if (m.last_err == ESP_OK) {
+            snprintf(line, sizeof(line), "Trains: Rail Data HTTP %d, retry in %u s", m.http_status, m.backoff_s);
+        } else {
+            snprintf(line, sizeof(line), "Trains: %s, retry in %u s", esp_err_to_name(m.last_err), m.backoff_s);
+        }
+        c = COLOR_BAD;
+    } else if (age < 0) {
+        snprintf(line, sizeof(line), m.waiting_for_wifi ? "Trains: waiting for Wi-Fi" : "Trains: first poll...");
+        c = COLOR_WARN;
+    } else {
+        snprintf(line, sizeof(line), "Trains: National Rail (Darwin), %ld min ago", age / 60);
+    }
+    if (trains_bad(&m, time(NULL))) {
+        c = COLOR_BAD;
+    }
+    ui_set_text(s_trains, line);
+    ui_set_text_color(s_trains, c);
+}
+
 static bool tube_bad(const tube_meta_t *m, time_t now)
 {
     return m->last_err != ESP_OK || (m->http_status && m->http_status != 200)
@@ -376,7 +417,9 @@ void status_compact(char *buf, size_t size, bool *problem)
     tube_get(NULL, &tm);
     bus_meta_t bm;
     bus_get_meta(&bm);
-    wx_bad = wx_bad || tube_bad(&tm, now) || bus_bad(&bm);
+    trains_meta_t rm;
+    trains_get(NULL, &rm);
+    wx_bad = wx_bad || tube_bad(&tm, now) || bus_bad(&bm) || trains_bad(&rm, now);
     *problem = ws.state != WIFI_ST_CONNECTED || ts.source != CLOCK_SRC_NTP || ac_bad || wx_bad;
 
     char wifi[32], sync[24] = "no NTP";
@@ -404,6 +447,7 @@ void status_corner_refresh(void)
     refresh_feed();
     refresh_routes();
     refresh_weather();
+    refresh_trains();
     refresh_tube();
     refresh_bus();
     refresh_battery();

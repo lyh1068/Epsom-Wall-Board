@@ -48,7 +48,10 @@ typedef struct {
 } row_t;
 
 static row_t s_rows[TRAINS_ROWS];
-static lv_obj_t *s_banner, *s_toggle[2], *s_trains_demo;
+static lv_obj_t *s_banner, *s_toggle[2];
+static lv_obj_t *s_row_hit[TRAINS_ROWS];
+static int s_row_train[TRAINS_ROWS];        /* row -> index into s_board, -1 if empty */
+static EXT_RAM_BSS_ATTR train_board_t s_board;  /* what the rows show; out of internal RAM */
 static lv_obj_t *s_status, *s_clock, *s_date;
 static lv_obj_t *s_bar, *s_bar_text;
 static lv_obj_t *s_pill[TUBE_MAX_LINES], *s_pill_text[TUBE_MAX_LINES], *s_tube_demo;
@@ -88,9 +91,8 @@ static const char *short_dest(const char *dest)
 
 static void refresh_trains(void)
 {
-    static EXT_RAM_BSS_ATTR train_board_t b;  /* off the LVGL stack, and out of internal RAM */
-    bool have = trains_get(&b);
-    ui_set_hidden(s_trains_demo, !(have && b.demo));
+    trains_meta_t m;
+    bool have = trains_get(&s_board, &m);
 
     time_t now = time(NULL);
     struct tm lt;
@@ -98,8 +100,8 @@ static void refresh_trains(void)
     int now_min = lt.tm_hour * 60 + lt.tm_min;
 
     int r = 0;
-    for (int i = 0; have && i < b.count && r < TRAINS_ROWS; i++) {
-        const train_t *t = &b.t[i];
+    for (int i = 0; have && i < s_board.count && r < TRAINS_ROWS; i++) {
+        const train_t *t = &s_board.t[i];
         if (s_london_only && !t->london) {
             continue;
         }
@@ -143,6 +145,8 @@ static void refresh_trains(void)
         if (t->platform[0]) {
             snprintf(plat, sizeof(plat), "P%s", t->platform);
         }
+        s_row_train[r] = i;
+        ui_set_hidden(s_row_hit[r], false);
         row_t *row = &s_rows[r++];
         ui_set_text(row->time, t->std);
         ui_set_text(row->dest, t->dest);
@@ -153,27 +157,43 @@ static void refresh_trains(void)
         ui_set_text_color(row->plat, c);
         ui_set_text_color(row->status, c);
     }
-    for (; r < TRAINS_ROWS; r++) {
+    /* Empty rows: say why there are no trains, instead of a blank board. */
+    const char *why[3] = { "", "", "" };
+    if (have) {
+        why[0] = r == 0 ? (s_london_only ? "No London trains in the next 2 hours" : "No departures in the next 2 hours") : "";
+    } else if (m.no_key) {
+        why[0] = "No live departures";
+        why[1] = "needs RAIL_DATA_KEY";
+        why[2] = "(see .env.example)";
+    } else if (m.waiting_for_wifi) {
+        why[0] = "Waiting for Wi-Fi...";
+    } else if (m.last_err != ESP_OK || (m.http_status && m.http_status != 200)) {
+        why[0] = "National Rail not answering";
+        why[1] = "(details on the radar page)";
+    } else {
+        why[0] = "Fetching departures...";
+    }
+    for (int e = 0; r < TRAINS_ROWS; r++, e++) {
+        s_row_train[r] = -1;
+        ui_set_hidden(s_row_hit[r], true);
         ui_set_text(s_rows[r].time, "");
-        /* No source yet: say what is missing instead of showing invented trains. */
-        static const char *const empty[] = { "No live departures yet", "needs RAIL_DATA_KEY", "(see .env.example)" };
-        ui_set_text(s_rows[r].dest, have ? (r == 0 ? "No departures" : "") : (r < 3 ? empty[r] : ""));
+        ui_set_text(s_rows[r].dest, e < 3 ? why[e] : "");
         ui_set_text_color(s_rows[r].dest, C_DIM);
         ui_set_text(s_rows[r].plat, "");
         ui_set_text(s_rows[r].status, "");
     }
 
-    ui_set_hidden(s_banner, !have || b.nrcc[0] == '\0');
-    if (have && b.nrcc[0]) {
-        ui_set_text(s_banner, b.nrcc);
+    ui_set_hidden(s_banner, !have || s_board.nrcc[0] == '\0');
+    if (have && s_board.nrcc[0]) {
+        ui_set_text(s_banner, s_board.nrcc);
     }
 
     /* Leave-by bar (PLAN.md §5.1): green at 0-2 min, grey with nothing in the next hour. */
     leave_by_t lb;
     char bar[128];
     uint32_t bg;
-    if (have && leave_by(b.t, b.count, now_min, WALK_MIN, LEAVE_BY_HORIZON_MIN, &lb)) {
-        const train_t *t = &b.t[lb.index];
+    if (have && leave_by(s_board.t, s_board.count, now_min, WALK_MIN, LEAVE_BY_HORIZON_MIN, &lb)) {
+        const train_t *t = &s_board.t[lb.index];
         char exp[24] = "";
         if (strcmp(t->etd, "On time") != 0 && hhmm_to_min(t->etd) >= 0) {
             snprintf(exp, sizeof(exp), " (exp %s)", t->etd);
@@ -190,7 +210,7 @@ static void refresh_trains(void)
         if (have) {
             snprintf(bar, sizeof(bar), "No London trains to catch in the next %d min", LEAVE_BY_HORIZON_MIN);
         } else {
-            snprintf(bar, sizeof(bar), "Leave-by countdown starts once live trains are set up");
+            snprintf(bar, sizeof(bar), "Leave-by countdown starts once live trains arrive");
         }
         bg = 0x37474F;
     }
@@ -241,34 +261,31 @@ static const uint32_t TUBE_COLOR[] = {
 };
 
 static EXT_RAM_BSS_ATTR tube_status_t s_tube;
-static lv_obj_t *s_reason;     /* reason overlay, NULL when closed */
+static lv_obj_t *s_detail;     /* detail overlay, NULL when closed */
 
-static void close_reason(lv_event_t *e)
+static void close_detail(lv_event_t *e)
 {
-    if (s_reason) {
-        lv_obj_delete_async(s_reason);
-        s_reason = NULL;
+    if (s_detail) {
+        lv_obj_delete_async(s_detail);
+        s_detail = NULL;
     }
 }
 
-/* Tap a pill: the line's status and TfL's reason text (PLAN.md §5.1). */
-static void on_pill_clicked(lv_event_t *e)
+/* A dimmed full-screen overlay with a titled text box; any tap closes it. */
+static void open_detail(const char *title, const char *text, uint32_t accent)
 {
-    int i = (int)(intptr_t)lv_event_get_user_data(e);
-    if (s_reason != NULL || i >= s_tube.count) {
+    if (s_detail != NULL) {
         return;
     }
-    const tube_line_t *l = &s_tube.line[i];
+    s_detail = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(s_detail);
+    lv_obj_set_size(s_detail, lv_pct(100), lv_pct(100));
+    lv_obj_set_style_bg_color(s_detail, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_detail, LV_OPA_70, 0);
+    lv_obj_set_clickable(s_detail, true);       /* swallow taps meant for the page */
+    lv_obj_add_event_cb(s_detail, close_detail, LV_EVENT_CLICKED, NULL);
 
-    s_reason = lv_obj_create(lv_layer_top());
-    lv_obj_remove_style_all(s_reason);
-    lv_obj_set_size(s_reason, lv_pct(100), lv_pct(100));
-    lv_obj_set_style_bg_color(s_reason, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_reason, LV_OPA_70, 0);
-    lv_obj_set_clickable(s_reason, true);       /* swallow taps meant for the page */
-    lv_obj_add_event_cb(s_reason, close_reason, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *box = lv_obj_create(s_reason);
+    lv_obj_t *box = lv_obj_create(s_detail);
     lv_obj_remove_style_all(box);
     lv_obj_set_clickable(box, false);
     lv_obj_set_scrollable(box, false);
@@ -280,26 +297,85 @@ static void on_pill_clicked(lv_event_t *e)
     lv_obj_set_style_pad_all(box, 28, 0);
     lv_obj_set_style_border_width(box, 4, 0);
     lv_obj_set_style_border_side(box, LV_BORDER_SIDE_LEFT, 0);
-    lv_obj_set_style_border_color(box, lv_color_hex(TUBE_COLOR[l->severity]), 0);
+    lv_obj_set_style_border_color(box, lv_color_hex(accent), 0);
     lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(box, 14, 0);
 
-    lv_obj_t *title = lv_label_create(box);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
-    lv_label_set_text_fmt(title, "%s: %s", l->name, l->status);
+    lv_obj_t *t = lv_label_create(box);
+    lv_obj_set_width(t, lv_pct(100));
+    lv_label_set_long_mode(t, LV_LABEL_LONG_MODE_WRAP);
+    lv_obj_set_style_text_font(t, &lv_font_montserrat_28, 0);
+    lv_obj_set_style_text_color(t, lv_color_white(), 0);
+    lv_label_set_text(t, title);
 
     lv_obj_t *body = lv_label_create(box);
     lv_obj_set_width(body, lv_pct(100));
     lv_label_set_long_mode(body, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_style_text_font(body, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(body, C_TEXT, 0);
-    lv_label_set_text(body, l->reason[0] ? l->reason : "No further information from TfL.");
+    lv_label_set_text(body, text);
 
     lv_obj_t *hint = lv_label_create(box);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(hint, C_DIM, 0);
     lv_label_set_text(hint, "Tap anywhere to close");
+}
+
+/* Tap a pill: the line's status and TfL's reason text (PLAN.md §5.1). */
+static void on_pill_clicked(lv_event_t *e)
+{
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    if (i >= s_tube.count) {
+        return;
+    }
+    const tube_line_t *l = &s_tube.line[i];
+    char title[64];
+    snprintf(title, sizeof(title), "%s: %s", l->name, l->status);
+    open_detail(title, l->reason[0] ? l->reason : "No further information from TfL.", TUBE_COLOR[l->severity]);
+}
+
+/* Tap a departure: platform, operator, length and where it calls (PLAN.md §5.1). */
+static void on_row_clicked(lv_event_t *e)
+{
+    int r = (int)(intptr_t)lv_event_get_user_data(e);
+    if (r < 0 || r >= TRAINS_ROWS || s_row_train[r] < 0 || s_row_train[r] >= s_board.count) {
+        return;
+    }
+    const train_t *t = &s_board.t[s_row_train[r]];
+    static EXT_RAM_BSS_ATTR char text[TRAINS_CALLS_MAX * 64 + 160];
+
+    char title[64], coaches[32] = "", plat[32] = "platform not yet announced";
+    snprintf(title, sizeof(title), "%s to %s", t->std, t->dest);
+    if (t->platform[0]) {
+        snprintf(plat, sizeof(plat), "Platform %s", t->platform);
+    }
+    if (t->coaches > 0) {
+        snprintf(coaches, sizeof(coaches), "  " "\xE2\x80\xA2" "  %d coaches", t->coaches);
+    }
+    int n = snprintf(text, sizeof(text), "%s  " "\xE2\x80\xA2" "  %s%s  " "\xE2\x80\xA2" "  %s\n\n%s", plat,
+                     t->operator_name, coaches, t->etd, t->ncalls ? "Calling at:" : "No calling points given.");
+    for (int i = 0; i < t->ncalls && n > 0 && n < (int)sizeof(text); i++) {
+        const train_call_t *c = &t->calls[i];
+        char when[24] = "";
+        if (strcmp(c->et, "Cancelled") == 0) {
+            snprintf(when, sizeof(when), "  (cancelled)");
+        } else if (c->et[0] && strcmp(c->et, "On time") != 0) {
+            snprintf(when, sizeof(when), "  (%s%s)", hhmm_to_min(c->et) >= 0 ? "exp " : "", c->et);
+        }
+        n += snprintf(text + n, sizeof(text) - n, "\n%s   %s%s", c->st, c->name, when);
+    }
+    int exp;
+    etd_kind_t k = train_etd(t, &exp);
+    bool bad = k == ETD_CANCELLED || k == ETD_DELAYED || train_delay_min(t) > 5;
+    open_detail(title, text, bad ? 0xFF5252 : 0xFFB000);
+}
+
+/* Tap the banner: the whole disruption message, which one line cuts short. */
+static void on_banner_clicked(lv_event_t *e)
+{
+    if (s_board.nrcc[0]) {
+        open_detail("National Rail disruption", s_board.nrcc, 0xFFD54F);
+    }
 }
 
 static void refresh_tube(void)
@@ -428,7 +504,6 @@ void morning_create(lv_obj_t *page)
     /* Header, demo badge, All | London toggle. */
     lv_obj_t *h = label(page, &lv_font_montserrat_36, C_AMBER, PAD, 18, 420);
     lv_label_set_text(h, "EPSOM " LV_SYMBOL_RIGHT " London");
-    s_trains_demo = demo_badge(page, 450, 32);
     s_toggle[0] = toggle_button(page, "All", LEFT_W - 260, 0);
     s_toggle[1] = toggle_button(page, "London", LEFT_W - 136, 1);
     lv_obj_set_state(s_toggle[0], LV_STATE_CHECKED, true);
@@ -438,10 +513,26 @@ void morning_create(lv_obj_t *page)
     lv_obj_set_style_bg_opa(s_banner, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(s_banner, 8, 0);
     lv_obj_set_style_radius(s_banner, 6, 0);
+    /* One line, cut with dots; tapping shows the whole message. */
+    lv_label_set_long_mode(s_banner, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_height(s_banner, 24 + 2 * 8);
+    lv_obj_set_clickable(s_banner, true);
+    lv_obj_add_event_cb(s_banner, on_banner_clicked, LV_EVENT_CLICKED, NULL);
     lv_obj_set_hidden(s_banner, true);
 
     for (int i = 0; i < TRAINS_ROWS; i++) {
         int32_t y = ROW_Y0 + i * ROW_H;
+        /* Tap target under the row's labels (labels are not clickable, so taps
+         * fall through to it): opens the calling points. */
+        s_row_hit[i] = lv_obj_create(page);
+        lv_obj_remove_style_all(s_row_hit[i]);
+        lv_obj_set_scrollable(s_row_hit[i], false);
+        lv_obj_set_pos(s_row_hit[i], PAD - 8, y - 4);
+        lv_obj_set_size(s_row_hit[i], LEFT_W - 2 * PAD + 16, ROW_H);
+        lv_obj_set_clickable(s_row_hit[i], true);
+        lv_obj_add_event_cb(s_row_hit[i], on_row_clicked, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+        lv_obj_set_hidden(s_row_hit[i], true);
+        s_row_train[i] = -1;
         s_rows[i].time = label(page, &lv_font_montserrat_36, C_AMBER, PAD, y, 120);
         s_rows[i].dest = label(page, &lv_font_montserrat_36, C_AMBER, PAD + 130, y, 420);
         s_rows[i].plat = label(page, &lv_font_montserrat_36, C_AMBER, PAD + 560, y, 76);
@@ -449,7 +540,7 @@ void morning_create(lv_obj_t *page)
         lv_obj_set_style_text_align(s_rows[i].status, LV_TEXT_ALIGN_RIGHT, 0);
     }
     lv_obj_t *hint = label(page, &lv_font_montserrat_14, C_DIM, PAD, ROW_Y0 + TRAINS_ROWS * ROW_H + 4, 600);
-    lv_label_set_text_fmt(hint, "Dimmed: under the %d min walk to the station", WALK_MIN);
+    lv_label_set_text_fmt(hint, "Dimmed: under the %d min walk to the station  " "\xE2\x80\xA2" "  tap a train for its stops", WALK_MIN);
 
     /* Right column. */
     s_status = label(page, &lv_font_montserrat_14, C_DIM, RIGHT_X, 18, RIGHT_W);

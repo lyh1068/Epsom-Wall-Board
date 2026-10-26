@@ -13,6 +13,7 @@
 #include "data/route_parse.h"
 #include "data/text_fold.h"
 #include "data/trains_logic.h"
+#include "data/trains_parse.h"
 #include "data/tube_parse.h"
 #include "data/weather_parse.h"
 #include "geo/geo.h"
@@ -694,6 +695,84 @@ static void test_sky(void)
     CHECK(fabs(alt - eps.lat) < 1.0 && adiff(az, 0) < 1.5);
 }
 
+#define LONDON_CRS "WAT,VIC,LBG,CLJ,WIM"
+
+static void test_trains_parse(const char *dir)
+{
+    char path[512];
+    snprintf(path, sizeof(path), "%s/ldbws_eps_details.json", dir);
+    size_t len;
+    char *json = read_file(path, &len);
+    CHECK(json != NULL);
+    if (json == NULL) {
+        return;
+    }
+
+    /* Epsom, Monday 26 Oct 2026 20:18: ten services, no disruption. */
+    static train_board_t b;
+    CHECK(trains_parse(json, len, LONDON_CRS, &b));
+    free(json);
+    CHECK(b.count == 10);
+    CHECK(b.nrcc[0] == '\0');
+    const train_t *t = &b.t[0];
+    CHECK(strcmp(t->std, "20:18") == 0 && strcmp(t->etd, "On time") == 0);
+    CHECK(strcmp(t->dest, "London Waterloo") == 0 && strcmp(t->dest_crs, "WAT") == 0);
+    CHECK(strcmp(t->platform, "4") == 0 && strcmp(t->operator_name, "South Western Railway") == 0);
+    CHECK(t->london && t->coaches == 10);
+    CHECK(t->ncalls == 10 && strcmp(t->calls[0].name, "Ewell West") == 0 && strcmp(t->calls[0].crs, "EWW") == 0);
+    CHECK(strcmp(t->calls[0].st, "20:21") == 0 && strcmp(t->calls[0].et, "On time") == 0);
+    CHECK(strcmp(t->calls[9].crs, "WAT") == 0);
+    /* Horsham, Guildford and Dorking are not London; Victoria and Bridge are. */
+    CHECK(!b.t[1].london && strcmp(b.t[1].dest, "Horsham") == 0);
+    CHECK(!b.t[2].london && !b.t[6].london && !b.t[7].london);
+    CHECK(b.t[3].london && strcmp(b.t[3].dest_crs, "VIC") == 0);
+    CHECK(b.t[4].london && strcmp(b.t[4].dest, "London Bridge") == 0);
+
+    /* The cases the fixture lacks: a cancellation, a delay, a train that
+     * divides (London only via its second portion), no platform yet, a
+     * disruption message in HTML, and too many calling points. */
+    const char *edge =
+        "{\"crs\":\"EPS\",\"locationName\":\"Epsom\","
+        "\"nrccMessages\":[{\"Value\":\"<p>Trains between Epsom &amp; Sutton\\n may be <b>delayed</b>.</p>"
+        "<p>More <a href=\\\"https://x\\\">here</a>.</p>\"},\"Second &#39;one&#39;\"],"
+        "\"trainServices\":["
+        "{\"std\":\"08:02\",\"etd\":\"Cancelled\",\"isCancelled\":true,\"platform\":\"2\",\"operator\":\"South Western Railway\","
+        " \"destination\":[{\"locationName\":\"London Waterloo\",\"crs\":\"WAT\"}]},"
+        "{\"std\":\"08:10\",\"etd\":\"08:17\",\"operator\":\"Southern\",\"length\":null,"
+        " \"destination\":[{\"locationName\":\"Horsham\",\"crs\":\"HRH\"},{\"locationName\":\"Dorking\",\"crs\":\"DKG\"}],"
+        " \"subsequentCallingPoints\":["
+        "  {\"callingPoint\":[{\"locationName\":\"Ashtead\",\"crs\":\"AHD\",\"st\":\"08:13\",\"et\":\"08:20\"},"
+        "                    {\"locationName\":\"Leatherhead\",\"crs\":\"LHD\",\"st\":\"08:16\",\"et\":\"Cancelled\",\"isCancelled\":true}]},"
+        "  {\"callingPoint\":[{\"locationName\":\"Clapham Junction\",\"crs\":\"CLJ\",\"st\":\"08:40\",\"et\":\"On time\"}]}]},"
+        "{\"std\":\"08:20\",\"etd\":\"Delayed\",\"operator\":\"Southern\","
+        " \"destination\":[{\"locationName\":\"London Victoria\",\"crs\":\"VIC\"}],"
+        " \"subsequentCallingPoints\":[{\"callingPoint\":["
+        "   {\"crs\":\"A01\"},{\"crs\":\"A02\"},{\"crs\":\"A03\"},{\"crs\":\"A04\"},{\"crs\":\"A05\"},{\"crs\":\"A06\"},"
+        "   {\"crs\":\"A07\"},{\"crs\":\"A08\"},{\"crs\":\"A09\"},{\"crs\":\"A10\"},{\"crs\":\"A11\"},{\"crs\":\"A12\"},"
+        "   {\"crs\":\"A13\"},{\"crs\":\"A14\"},{\"crs\":\"A15\"},{\"crs\":\"A16\"},{\"crs\":\"A17\"},{\"crs\":\"VIC\"}]}]}"
+        "]}";
+    CHECK(trains_parse(edge, strlen(edge), LONDON_CRS, &b));
+    CHECK(b.count == 3);
+    CHECK(strcmp(b.t[0].etd, "Cancelled") == 0 && b.t[0].london && b.t[0].ncalls == 0);
+    int exp;
+    CHECK(train_etd(&b.t[0], &exp) == ETD_CANCELLED);
+    t = &b.t[1];
+    CHECK(strcmp(t->dest, "Horsham & Dorking") == 0 && strcmp(t->dest_crs, "HRH") == 0);
+    CHECK(t->platform[0] == '\0' && t->coaches == 0);
+    CHECK(t->london);                   /* via the portion that goes to Clapham */
+    CHECK(t->ncalls == 2 && strcmp(t->calls[1].et, "Cancelled") == 0);
+    CHECK(train_delay_min(t) == 7);
+    CHECK(b.t[2].ncalls == TRAINS_CALLS_MAX && b.t[2].london);
+    CHECK(train_etd(&b.t[2], &exp) == ETD_DELAYED);
+    CHECK(strcmp(b.nrcc, "Trains between Epsom & Sutton may be delayed. More here.  /  Second 'one'") == 0);
+
+    /* No trains at all is an empty board; something else is not a board. */
+    const char *none = "{\"crs\":\"EPS\",\"trainServices\":null}";
+    CHECK(trains_parse(none, strlen(none), LONDON_CRS, &b) && b.count == 0);
+    CHECK(!trains_parse("[]", 2, LONDON_CRS, &b));
+    CHECK(!trains_parse("{\"message\":\"Unauthorized\"}", 26, LONDON_CRS, &b));
+}
+
 int main(int argc, char **argv)
 {
     const char *fixtures = argc > 1 ? argv[1] : "test/fixtures";
@@ -705,6 +784,7 @@ int main(int argc, char **argv)
     test_route_cache();
     test_weather(fixtures);
     test_trains_logic();
+    test_trains_parse(fixtures);
     test_tube(fixtures);
     test_bus(fixtures);
     test_sky();

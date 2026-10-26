@@ -50,9 +50,19 @@
 #define TRAINS_ROWS             6
 #define LEAVE_BY_HORIZON_MIN    60
 
-/* 1 fills the board with a demo timetable (badged DEMO) to check the layout.
- * 0 shows no trains until Phase 6 brings live data. */
-#define TRAINS_DEMO             0
+/* Darwin Live Departure Board via the Rail Data Marketplace (PLAN.md §4). The
+ * base URL is the product's own, from its Specification tab; the key goes in
+ * an x-apikey header. */
+#define RAIL_LDBWS_BASE         "https://api1.raildata.org.uk/1010-live-departure-board-dep1_2/LDBWS/api/20220120"
+#define TRAINS_STATION_CRS      "EPS"
+#define TRAINS_WINDOW_MIN       120
+/* London-bound: the destination or a later stop is one of these (PLAN.md §4). */
+#define TRAINS_LONDON_CRS       "WAT,VIC,LBG,CLJ,WIM"
+#define TRAINS_POLL_S           60
+#define TRAINS_POLL_COMMUTE_S   30
+#define TRAINS_COMMUTE_FROM_MIN (6 * 60 + 30)   /* weekdays, local time */
+#define TRAINS_COMMUTE_TO_MIN   (9 * 60 + 30)
+#define TRAINS_BACKOFF_MAX_S    900
 
 /* TfL lines for the onward journey, in display order (PLAN.md §4: 2 min). */
 #define TUBE_LINES              "northern,waterloo-city,jubilee,circle"

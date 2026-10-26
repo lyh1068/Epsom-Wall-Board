@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <time.h>
 
 /*
  * Departure-board logic with no I/O: Darwin time strings, the midnight wrap,
@@ -8,7 +9,16 @@
  * local midnight; the caller gets "now" from localtime(), which handles BST.
  */
 
-#define TRAINS_MAX 10
+#define TRAINS_MAX          10
+#define TRAINS_CALLS_MAX    16
+
+/* A later stop, for the calling-points popup. */
+typedef struct {
+    char name[28];
+    char crs[4];
+    char st[6];             /* scheduled, "HH:MM" */
+    char et[12];            /* "On time", "HH:MM", "Delayed", "Cancelled" */
+} train_call_t;
 
 typedef struct {
     char std[6];            /* scheduled, "HH:MM" */
@@ -18,7 +28,18 @@ typedef struct {
     char platform[4];       /* "" if not yet announced */
     char operator_name[24];
     bool london;            /* destination or a later calling point is in London */
+    int coaches;            /* 0 if not given */
+    int ncalls;
+    train_call_t calls[TRAINS_CALLS_MAX];
 } train_t;
+
+/* Epsom (EPS) departures, as parsed from Darwin. */
+typedef struct {
+    int count;
+    train_t t[TRAINS_MAX];
+    char nrcc[400];         /* disruption message(s), plain ASCII; "" if none */
+    time_t updated;
+} train_board_t;
 
 typedef enum {
     ETD_ON_TIME,
