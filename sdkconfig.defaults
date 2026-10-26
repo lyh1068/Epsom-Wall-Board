@@ -65,7 +65,7 @@ CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
 # data left no room for the second idle task, and the board would not boot.
 CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 
-# Performance monitor
+# No on-screen FPS/CPU overlay (the BSP example has one): it redraws a few times
+# a second for ever, and keeps LVGL's refresh timer from ever pausing.
 CONFIG_LV_USE_OBSERVER=y
-CONFIG_LV_USE_SYSMON=y
-CONFIG_LV_USE_PERF_MONITOR=y
+# CONFIG_LV_USE_SYSMON is not set

@@ -75,6 +75,18 @@
 #define BRIGHTNESS_DEFAULT      60
 #define BRIGHTNESS_MIN          5
 
+/* AXI read priority of the display DMA, 0..15 (everything else stays at 0). */
+#define DISPLAY_DMA_QOS         15
+
+/* 2D-DMA bandwidth cap, on each of its read and write channels: at most one
+ * transfer per 2^(level+1) bus cycles on average, a 32-deep bucket allowing
+ * bursts at the peak level. At 1/256 of a ~180 MHz bus with 128-byte bursts,
+ * ~90 MB/s each way: a full-screen redraw still takes well under 0.1 s more,
+ * and the display keeps the ~125 MB/s it reads while scanning out. */
+#define DMA2D_QOS_BURST         32
+#define DMA2D_QOS_PEAK_LEVEL    5
+#define DMA2D_QOS_RATE_LEVEL    7
+
 /* Sky page: redraw the chart this often. Each redraw refreshes the whole
  * 704 px chart, which tears briefly on this panel; the sky moves ~5 px in 5 min. */
 #define SKY_REDRAW_MIN          5

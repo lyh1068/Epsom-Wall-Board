@@ -13,6 +13,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "hal/axi_icm_ll.h"
 #include "lvgl.h"
 #include "net/sntp_time.h"
 #include "net/wifi.h"
@@ -52,6 +53,20 @@ void app_main(void)
     lv_display_t *disp = bsp_display_start_with_config(&disp_cfg);
     if (disp == NULL) {
         ESP_LOGE(TAG, "display did not start");
+    }
+    /* The panel's DMA reads the framebuffer out of PSRAM non-stop. Every flush
+     * (render, PPA rotation and DMA2D copy) competes with it for that PSRAM, and
+     * at equal priority (the reset default) a big redraw such as a page switch
+     * can starve it: an underrun, which turns the screen blue for a frame.
+     * Let the display DMA (DW-GDMA, both master ports) win the arbitration... */
+    axi_icm_ll_set_dw_gdma_qos_arbiter_prio(0, 0, DISPLAY_DMA_QOS);
+    axi_icm_ll_set_dw_gdma_qos_arbiter_prio(1, 0, DISPLAY_DMA_QOS);
+    /* ...and cap the 2D-DMA (the PPA rotation and the framebuffer copy both run
+     * on it), which otherwise takes all the bandwidth it can get during a big
+     * redraw. Priority alone did not stop the rare blue frame. */
+    for (int ch = AXI_ICM_ACCESS_READ; ch <= AXI_ICM_ACCESS_WRITE; ch++) {
+        axi_icm_ll_set_qos_burstiness(AXI_ICM_MASTER_DMA2D, DMA2D_QOS_BURST, ch);
+        axi_icm_ll_set_qos_peak_transaction_rate(AXI_ICM_MASTER_DMA2D, DMA2D_QOS_PEAK_LEVEL, DMA2D_QOS_RATE_LEVEL, ch);
     }
 
     /* Charger on: the BSP never drives CHG_EN, so the pack would not charge. */
